@@ -5,8 +5,10 @@
 // ---------------------------------
 // 1. 全局配置与状态
 // ---------------------------------
-// (已从您的CSV文件确认，不含'技术')
-const SUBJECT_LIST = ['语文', '数学', '英语', '物理', '化学', '生物', '政治', '历史', '地理'];
+// 默认科目列表，仅用于程序首次加载
+const DEFAULT_SUBJECT_LIST = ['语文', '数学', '英语', '物理', '化学', '生物', '政治', '历史', '地理'];
+// [!!] 关键：G_DynamicSubjectList 现在是唯一的科目来源，默认等于 DEFAULT_SUBJECT_LIST
+let G_DynamicSubjectList = [...DEFAULT_SUBJECT_LIST];
 
 // 存储数据
 let G_StudentsData = []; // { id, name, class, totalScore, rank, gradeRank, scores: {...} }
@@ -147,13 +149,26 @@ async function handleFileData(event, type) {
     label.innerHTML = "🔄 正在解析...";
 
     try {
-        const data = await loadExcelData(file); // 智能解析器
-        const rankedData = addSubjectRanksToData(data); // 添加单科排名
+        // 1. [!!] 接收解析器返回的两个值
+        const { processedData, dynamicSubjectList } = await loadExcelData(file);
 
+        if (type === 'main') {
+            // 2. [!!] 如果是主文件, 更新全局科目列表和配置
+            // (这必须在 'addSubjectRanksToData' 之前完成)
+            G_DynamicSubjectList = dynamicSubjectList;
+            initializeSubjectConfigs();
+        }
+
+        // 3. [!!] (移出) 在 IF/ELSE 外部计算排名
+        // 这样 'rankedData' 在后续两个分支中都可用
+        const rankedData = addSubjectRanksToData(processedData);
+
+        // 4. [!!] (重构) 根据类型分配数据
         if (type === 'main') {
             G_StudentsData = rankedData;
             localStorage.setItem('G_StudentsData', JSON.stringify(G_StudentsData));
-            // (新增) 填充班级筛选
+            localStorage.setItem('G_MainFileName', file.name);
+            // 填充班级筛选
             populateClassFilter(G_StudentsData);
 
             // 解锁 UI
@@ -166,8 +181,10 @@ async function handleFileData(event, type) {
             // 运行分析
             runAnalysisAndRender();
         } else {
+            // (现在 'rankedData' 在此作用域中可用)
             G_CompareData = rankedData;
             localStorage.setItem('G_CompareData', JSON.stringify(G_CompareData));
+            localStorage.setItem('G_CompareFileName', file.name);
         }
 
         label.innerHTML = `✅ ${file.name} (已加载)`;
@@ -354,7 +371,8 @@ function loadExcelData(file) {
                     return reject(new Error("文件解析成功，但没有找到有效的学生数据行。"));
                 }
 
-                resolve(processedData);
+                // [!!] 核心修改：同时返回解析到的数据和动态科目列表
+                resolve({ processedData: processedData, dynamicSubjectList: dynamicSubjectList });
 
             } catch (err) {
                 console.error(err);
@@ -374,17 +392,39 @@ function loadExcelData(file) {
  */
 function addSubjectRanksToData(studentsData) {
     const dataWithRanks = [...studentsData];
+    const classes = [...new Set(dataWithRanks.map(s => s.class))]; // [!!] (新增) 获取所有班级
 
-    SUBJECT_LIST.forEach(subjectName => {
-        const sortedBySubject = [...dataWithRanks].sort((a, b) => {
+    G_DynamicSubjectList.forEach(subjectName => {
+
+        // 1. [!!] (修改) 计算年级科目排名 (Grade Ranks)
+        const sortedByGrade = [...dataWithRanks].sort((a, b) => {
             const scoreA = a.scores[subjectName] || -Infinity;
             const scoreB = b.scores[subjectName] || -Infinity;
             return scoreB - scoreA;
         });
 
-        sortedBySubject.forEach((student, index) => {
-            if (!student.ranks) student.ranks = {};
-            student.ranks[subjectName] = index + 1;
+        sortedByGrade.forEach((student, index) => {
+            if (!student.gradeRanks) student.gradeRanks = {}; // [!!] (重命名)
+            student.gradeRanks[subjectName] = index + 1;
+        });
+
+        // 2. [!!] (新增) 计算班级科目排名 (Class Ranks)
+        classes.forEach(className => {
+            // 筛选出该班学生
+            const classStudents = dataWithRanks.filter(s => s.class === className);
+
+            // 按分数排序
+            const sortedByClass = [...classStudents].sort((a, b) => {
+                const scoreA = a.scores[subjectName] || -Infinity;
+                const scoreB = b.scores[subjectName] || -Infinity;
+                return scoreB - scoreA;
+            });
+
+            // 附加班级排名
+            sortedByClass.forEach((student, index) => {
+                if (!student.classRanks) student.classRanks = {}; // [!!] (新属性)
+                student.classRanks[subjectName] = index + 1;
+            });
         });
     });
 
@@ -404,9 +444,10 @@ function calculateAllStatistics(studentsData) {
     const stats = {};
 
     // 1. 统计所有科目 (从 G_SubjectConfigs 读取配置)
-    let totalFull = 0, totalPass = 0, totalExcel = 0;
+    // [!!] (新增) totalGood
+    let totalFull = 0, totalPass = 0, totalExcel = 0, totalGood = 0;
 
-    SUBJECT_LIST.forEach(subjectName => {
+    G_DynamicSubjectList.forEach(subjectName => {
         const config = G_SubjectConfigs[subjectName];
         if (!config) return; // 如果配置不存在，跳过
 
@@ -415,18 +456,21 @@ function calculateAllStatistics(studentsData) {
             .filter(score => typeof score === 'number' && !isNaN(score))
             .sort((a, b) => a - b);
 
-        stats[subjectName] = calculateStatsForScores(subjectScores, config.full, config.pass, config.excel);
+        // [!!] (修改) 传入 config.good
+        stats[subjectName] = calculateStatsForScores(subjectScores, config.full, config.pass, config.excel, config.good);
         stats[subjectName].name = subjectName;
 
         // 累加总分配置
         totalFull += config.full;
         totalPass += config.pass;
         totalExcel += config.excel;
+        totalGood += config.good; // [!!] (新增)
     });
 
     // 2. 统计 '总分' (totalScore)
     const totalScores = studentsData.map(s => s.totalScore).filter(score => typeof score === 'number' && !isNaN(score)).sort((a, b) => a - b);
-    stats['totalScore'] = calculateStatsForScores(totalScores, totalFull, totalPass, totalExcel);
+    // [!!] (修改) 传入 totalGood
+    stats['totalScore'] = calculateStatsForScores(totalScores, totalFull, totalPass, totalExcel, totalGood);
     stats['totalScore'].name = '总分';
 
     return stats;
@@ -436,9 +480,11 @@ function calculateAllStatistics(studentsData) {
  * (重构) 6.4. 辅助函数：计算单个分数数组的统计值
  * [!!] 已新增 "difficulty" 字段
  */
-function calculateStatsForScores(scores, fullMark, passLine, excellentLine) {
+// [!!] (修改) 增加 goodLine 参数
+function calculateStatsForScores(scores, fullMark, passLine, excellentLine, goodLine) {
     const count = scores.length;
-    if (count === 0) return { average: 0, max: 0, min: 0, median: 0, passRate: 0, excellentRate: 0, count: 0, variance: 0, stdDev: 0, difficulty: 0, scores: [] };
+    // [!!] (修改) 增加 goodRate 和 failRate
+    if (count === 0) return { average: 0, max: 0, min: 0, median: 0, passRate: 0, excellentRate: 0, goodRate: 0, failRate: 0, count: 0, variance: 0, stdDev: 0, difficulty: 0, scores: [] };
 
     const total = scores.reduce((acc, score) => acc + score, 0);
     const average = total / count;
@@ -451,11 +497,26 @@ function calculateStatsForScores(scores, fullMark, passLine, excellentLine) {
     const variance = (count > 0) ? scores.reduce((acc, score) => acc + Math.pow(score - average, 2), 0) / count : 0;
     const stdDev = (count > 0) ? Math.sqrt(variance) : 0;
 
-    // [!!] (新增) 难度系数 (平均分 / 满分)
     const difficulty = (fullMark > 0) ? parseFloat((average / fullMark).toFixed(2)) : 0;
 
     const passCount = scores.filter(s => s >= passLine).length;
     const excellentCount = scores.filter(s => s >= excellentLine).length;
+
+    // [!!] (新增) 良好率 (B) 和 不及格率 (D)
+    // (B) - B (良好) = [goodLine, excelLine)
+    const countB = scores.filter(s => s >= goodLine && s < excellentLine).length;
+    // (D) - D (不及格) = < passLine
+    const countD = scores.filter(s => s < passLine).length;
+
+    // [!!] (新增) C级率 (C)
+    // (C) - C (及格) = [passLine, goodLine)
+    const countC = scores.filter(s => s >= passLine && s < goodLine).length;
+    const cRate = (count > 0) ? (countC / count) * 100 : 0;
+
+    // [!!] (新增) 良好率 (B级率)
+    const goodRate = (count > 0) ? (countB / count) * 100 : 0;
+    // [!!] (新增) 不及格率 (D级率)
+    const failRate = (count > 0) ? (countD / count) * 100 : 0;
 
     return {
         count: count,
@@ -465,9 +526,13 @@ function calculateStatsForScores(scores, fullMark, passLine, excellentLine) {
         median: median,
         passRate: parseFloat(((passCount / count) * 100).toFixed(2)),
         excellentRate: parseFloat(((excellentCount / count) * 100).toFixed(2)),
+        // [!!] (新增)
+        goodRate: parseFloat(goodRate.toFixed(2)),
+        cRate: parseFloat(cRate.toFixed(2)), // [!!] (新增)
+        failRate: parseFloat(failRate.toFixed(2)),
         variance: parseFloat(variance.toFixed(2)),
         stdDev: parseFloat(stdDev.toFixed(2)),
-        difficulty: difficulty, // [!!] (新增) 
+        difficulty: difficulty,
         scores: scores // 保留原始数组，用于直方图
     };
 }
@@ -527,6 +592,21 @@ function renderModule(moduleName, activeData, activeCompareData) {
         case 'paper':
             renderPaper(container, G_Statistics, activeData);
             break;
+        case 'single-subject':
+            renderSingleSubject(container, activeData, G_Statistics);
+            break;
+
+        // [!!] (新增) 3个新模块的路由
+        case 'boundary':
+            renderBoundary(container, activeData, G_Statistics);
+            break;
+        case 'holistic':
+            renderHolisticBalance(container, activeData, G_Statistics);
+            break;
+        case 'trend-distribution':
+            renderTrendDistribution(container, activeData, activeCompareData, G_Statistics, G_CompareStatistics, G_CurrentClassFilter); // [!!] (新增) 传入 G_CurrentClassFilter
+            break;
+
         case 'trend':
             renderTrend(container, activeData, activeCompareData);
             break;
@@ -538,7 +618,7 @@ function renderModule(moduleName, activeData, activeCompareData) {
             break;
         // [!!] (新增) 偏科诊断
         case 'weakness':
-            renderWeakness(container, activeData);
+            renderWeakness(container, activeData, G_Statistics); // [!!] (新增) 传入 G_Statistics
             break;
         default:
             container.innerHTML = `<h2>模块 ${moduleName} (待开发)</h2>`;
@@ -568,7 +648,7 @@ function populateClassFilter(students) {
  */
 function initializeSubjectConfigs() {
     G_SubjectConfigs = {};
-    SUBJECT_LIST.forEach(subject => {
+    G_DynamicSubjectList.forEach(subject => {
         // 默认 语数英 150，其他 100
         const isY_S_W = ['语文', '数学', '英语'].includes(subject);
 
@@ -592,7 +672,7 @@ function initializeSubjectConfigs() {
  */
 function populateSubjectConfigModal() {
     let html = '';
-    SUBJECT_LIST.forEach(subject => {
+    G_DynamicSubjectList.forEach(subject => {
         const config = G_SubjectConfigs[subject];
         html += `
             <tr>
@@ -634,20 +714,29 @@ function saveSubjectConfigsFromModal() {
 function renderDashboard(container, stats, activeData) {
     const totalStats = stats.totalScore || {};
 
-    // 1. 渲染 KPI 卡片 (保持不变)
+    // [!!] (核心修改) 计算总人数、参考人数、缺考人数
+    const totalStudentCount = activeData.length; // (总人数 = 筛选器内的所有学生)
+    const participantCount = totalStats.count || 0; // (考试人数 = 有总分的学生)
+    const missingCount = totalStudentCount - participantCount; // (缺考人数)
+
+    // 1. 渲染 KPI 卡片 (已修改)
     container.innerHTML = `
         <h2>模块一：班级整体分析 (当前筛选: ${G_CurrentClassFilter})</h2>
         <div class="kpi-grid">
+            <div class="kpi-card"><h3>总人数</h3><div class="value">${totalStudentCount}</div></div>
+            <div class="kpi-card"><h3>考试人数</h3><div class="value">${participantCount}</div></div>
+            <div class="kpi-card"><h3>缺考人数</h3><div class="value">${missingCount}</div></div>
             <div class="kpi-card"><h3>总分平均分</h3><div class="value">${totalStats.average || 0}</div></div>
             <div class="kpi-card"><h3>总分最高分</h3><div class="value">${totalStats.max || 0}</div></div>
+            <div class="kpi-card"><h3>总分最低分</h3><div class="value">${totalStats.min || 0}</div></div>
             <div class="kpi-card"><h3>总分中位数</h3><div class="value">${totalStats.median || 0}</div></div>
-            <div class="kpi-card"><h3>总分及格率 (%)</h3><div class="value">${totalStats.passRate || 0}</div></div>
             <div class="kpi-card"><h3>总分优秀率 (%)</h3><div class="value">${totalStats.excellentRate || 0}</div></div>
-            <div class="kpi-card"><h3>考试人数</h3><div class="value">${totalStats.count || 0}</div></div>
-            <div class="kpi-card"><h3>总人数</h3><div class="value">${totalStats.count || 0}</div></div>
+            <div class="kpi-card"><h3>总分良好率 (%)</h3><div class="value">${totalStats.goodRate || 0}</div></div>
+            <div class="kpi-card"><h3>总分及格率 (%)</h3><div class="value">${totalStats.passRate || 0}</div></div>
+            <div class="kpi-card"><h3>总分不及格率 (%)</h3><div class="value">${totalStats.failRate || 0}</div></div>
             <div class="kpi-card"><h3>总分标准差</h3><div class="value">${totalStats.stdDev || 0}</div></div>
         </div>
-        
+
         <div class="main-card-wrapper" style="margin-bottom: 20px;">
             <h3>全科统计表</h3>
             <div class="table-container" style="max-height: 400px;">
@@ -659,8 +748,9 @@ function renderDashboard(container, stats, activeData) {
                             <th>平均分</th>
                             <th>最高分</th>
                             <th>中位数</th>
-                            <th>及格率 (%)</th>
                             <th>优秀率 (%)</th>
+                            <th>良好率 (%)</th> 
+                            <th>及格率 (%)</th>
                             <th>标准差</th>
                         </tr>
                     </thead>
@@ -671,19 +761,21 @@ function renderDashboard(container, stats, activeData) {
                             <td>${stats.totalScore.average}</td>
                             <td>${stats.totalScore.max}</td>
                             <td>${stats.totalScore.median}</td>
-                            <td>${stats.totalScore.passRate}</td>
                             <td>${stats.totalScore.excellentRate}</td>
+                            <td>${stats.totalScore.goodRate || 0}</td> 
+                            <td>${stats.totalScore.passRate}</td>
                             <td>${stats.totalScore.stdDev || 0}</td>
                         </tr>
-                        ${SUBJECT_LIST.map(subject => stats[subject]).filter(s => s).map(s => `
+                        ${G_DynamicSubjectList.map(subject => stats[subject]).filter(s => s).map(s => `
                             <tr>
                                 <td><strong>${s.name}</strong></td>
                                 <td>${s.count}</td>
                                 <td>${s.average}</td>
                                 <td>${s.max}</td>
                                 <td>${s.median}</td>
-                                <td>${s.passRate}</td>
                                 <td>${s.excellentRate}</td>
+                                <td>${s.goodRate || 0}</td> 
+                                <td>${s.passRate}</td>
                                 <td>${s.stdDev || 0}</td>
                             </tr>
                         `).join('')}
@@ -706,7 +798,7 @@ function renderDashboard(container, stats, activeData) {
                     <label for="class-compare-subject">科目:</label>
                     <select id="class-compare-subject" class="sidebar-select" style="min-width: 100px;">
                         <option value="totalScore">总分</option>
-                        ${SUBJECT_LIST.map(s => `<option value="${s}">${s}</option>`).join('')}
+                        ${G_DynamicSubjectList.map(s => `<option value="${s}">${s}</option>`).join('')}
                     </select>
                     <label for="class-compare-metric">指标:</label>
                     <select id="class-compare-metric" class="sidebar-select" style="min-width: 120px;">
@@ -737,11 +829,11 @@ function renderDashboard(container, stats, activeData) {
                 <div class="controls-bar chart-controls">
                     <label for="scatter-x-subject">X轴:</label>
                     <select id="scatter-x-subject" class="sidebar-select">
-                        ${SUBJECT_LIST.map(s => `<option value="${s}">${s}</option>`).join('')}
+                        ${G_DynamicSubjectList.map(s => `<option value="${s}">${s}</option>`).join('')}
                     </select>
                     <label for="scatter-y-subject">Y轴:</label>
                     <select id="scatter-y-subject" class="sidebar-select">
-                        ${SUBJECT_LIST.map((s, i) => `<option value="${s}" ${i === 1 ? 'selected' : ''}>${s}</option>`).join('')}
+                        ${G_DynamicSubjectList.map((s, i) => `<option value="${s}" ${i === 1 ? 'selected' : ''}>${s}</option>`).join('')}
                     </select>
                 </div>
                 <div class="chart-container" id="correlation-scatter-chart" style="height: 350px;"></div>
@@ -761,7 +853,7 @@ function renderDashboard(container, stats, activeData) {
     const drawHistogram = () => {
         // [!!] 核心修改
         if (totalStats.scores && totalStats.scores.length > 0) {
-            const fullScore = SUBJECT_LIST.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.full || 0), 0);
+            const fullScore = G_DynamicSubjectList.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.full || 0), 0);
             const binSize = parseInt(document.getElementById('histogram-bin-size').value) || 30;
             renderHistogram(
                 'histogram-chart',
@@ -899,59 +991,67 @@ function renderStudent(container, students, stats) {
                 </div>
             </div>
             
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>科目</th>
-                            <th>得分 (变化)</th>
-                            <th>科目排名 (变化)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr class="total-score-row">
-                            <td><strong>总分</strong></td>
-                            <td>
-                                <strong>${student.totalScore}</strong>
-                                ${(oldStudent && scoreDiff !== 'N/A') ? `<span class="${scoreDiff > 0 ? 'progress' : scoreDiff < 0 ? 'regress' : ''}">(${scoreDiff > 0 ? '▲' : '▼'} ${Math.abs(scoreDiff)})</span>` : ''}
-                            </td>
-                            <td>
-                                <strong>${student.rank}</strong>
-                                ${(oldStudent && rankDiff !== 'N/A') ? `<span class="${rankDiff > 0 ? 'progress' : rankDiff < 0 ? 'regress' : ''}">(${rankDiff > 0 ? '▲' : '▼'} ${Math.abs(rankDiff)})</span>` : ''}
-                            </td>
-                        </tr>
-                        
-                        ${SUBJECT_LIST.map(subject => {
-            let subjectScoreDiff = 'N/A';
-            let subjectRankDiff = 'N/A';
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>科目</th>
+                                    <th>得分 (变化)</th>
+                                    <th>班级科目排名 (变化)</th>
+                                    <th>年级科目排名 (变化)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
 
-            if (oldStudent && oldStudent.scores && oldStudent.ranks) {
+                                ${G_DynamicSubjectList.map(subject => {
+            let subjectScoreDiff = 'N/A';
+            let subjectClassRankDiff = 'N/A'; // [!!] (新增)
+            let subjectGradeRankDiff = 'N/A'; // [!!] (重命名)
+
+            if (oldStudent && oldStudent.scores) {
+                // 得分变化 (不变)
                 const oldScore = oldStudent.scores[subject] || 0;
                 const newScore = student.scores[subject] || 0;
                 if (oldScore !== 0 || newScore !== 0) {
                     subjectScoreDiff = (newScore - oldScore).toFixed(2);
                 }
 
-                const oldRank = oldStudent.ranks[subject] || 0;
-                const newRank = student.ranks[subject] || 0;
-                if (oldRank > 0 && newRank > 0) {
-                    subjectRankDiff = oldRank - newRank;
+                // [!!] (新增) 班级科目排名变化
+                if (oldStudent.classRanks && student.classRanks) {
+                    const oldClassRank = oldStudent.classRanks[subject] || 0;
+                    const newClassRank = student.classRanks[subject] || 0;
+                    if (oldClassRank > 0 && newClassRank > 0) {
+                        subjectClassRankDiff = oldClassRank - newClassRank;
+                    }
+                }
+
+                // [!!] (修改) 年级科目排名变化
+                if (oldStudent.gradeRanks && student.gradeRanks) {
+                    const oldGradeRank = oldStudent.gradeRanks[subject] || 0;
+                    const newGradeRank = student.gradeRanks[subject] || 0;
+                    if (oldGradeRank > 0 && newGradeRank > 0) {
+                        subjectGradeRankDiff = oldGradeRank - newGradeRank;
+                    }
                 }
             }
 
             return `
-                            <tr>
-                                <td>${subject}</td>
-                                <td>
-                                    ${student.scores[subject] || 0}
-                                    ${(oldStudent && subjectScoreDiff !== 'N/A') ? `<span class="${subjectScoreDiff > 0 ? 'progress' : subjectScoreDiff < 0 ? 'regress' : ''}">(${subjectScoreDiff > 0 ? '▲' : '▼'} ${Math.abs(subjectScoreDiff)})</span>` : ''}
-                                </td>
-                                <td>
-                                    ${student.ranks[subject] || 'N/A'}
-                                    ${(oldStudent && subjectRankDiff !== 'N/A') ? `<span class="${subjectRankDiff > 0 ? 'progress' : subjectRankDiff < 0 ? 'regress' : ''}">(${subjectRankDiff > 0 ? '▲' : '▼'} ${Math.abs(subjectRankDiff)})</span>` : ''}
-                                </td>
-                            </tr>
-                            `;
+                                    <tr>
+                                        <td>${subject}</td>
+                                        <td>
+                                            ${student.scores[subject] || 0}
+                                            ${(oldStudent && subjectScoreDiff !== 'N/A') ? `<span class="${subjectScoreDiff > 0 ? 'progress' : subjectScoreDiff < 0 ? 'regress' : ''}">(${subjectScoreDiff > 0 ? '▲' : '▼'} ${Math.abs(subjectScoreDiff)})</span>` : ''}
+                                        </td>
+                                        <td>
+                                            ${student.classRanks ? (student.classRanks[subject] || 'N/A') : 'N/A'}
+                                            ${(oldStudent && subjectClassRankDiff !== 'N/A') ? `<span class="${subjectClassRankDiff > 0 ? 'progress' : subjectClassRankDiff < 0 ? 'regress' : ''}">(${subjectClassRankDiff > 0 ? '▲' : '▼'} ${Math.abs(subjectClassRankDiff)})</span>` : ''}
+                                        </td>
+                                        <td>
+                                            ${student.gradeRanks ? (student.gradeRanks[subject] || 'N/A') : 'N/A'}
+                                            ${(oldStudent && subjectGradeRankDiff !== 'N/A') ? `<span class="${subjectGradeRankDiff > 0 ? 'progress' : subjectGradeRankDiff < 0 ? 'regress' : ''}">(${subjectGradeRankDiff > 0 ? '▲' : '▼'} ${Math.abs(subjectGradeRankDiff)})</span>` : ''}
+                                        </td>
+                                    </tr>
+                                    `;
         }).join('')}
                     </tbody>
                 </table>
@@ -1036,7 +1136,7 @@ function renderPaper(container, stats, activeData) {
                 <label for="subject-select">选择科目:</label>
                 <select id="subject-select" class="sidebar-select">
                     <option value="totalScore">总分</option>
-                    ${SUBJECT_LIST.map(s => `<option value="${s}">${s}</option>`).join('')}
+                    ${G_DynamicSubjectList.map(s => `<option value="${s}">${s}</option>`).join('')}
                 </select>
                 
                 <label for="paper-bin-size">分段大小:</label>
@@ -1079,7 +1179,7 @@ function renderPaper(container, stats, activeData) {
 
         let fullScore;
         if (subjectName === 'totalScore') {
-            fullScore = SUBJECT_LIST.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.full || 0), 0);
+            fullScore = G_DynamicSubjectList.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.full || 0), 0);
         } else {
             fullScore = G_SubjectConfigs[subjectName]?.full || 100;
         }
@@ -1107,6 +1207,167 @@ function renderPaper(container, stats, activeData) {
     drawChart('totalScore');
 }
 
+
+/**
+ * (新增) 9.3.5. 模块：单科成绩分析
+ * @param {Object} container - HTML 容器
+ * @param {Array} activeData - 当前已筛选的学生数据
+ * @param {Object} stats - G_Statistics (全体统计)
+ */
+function renderSingleSubject(container, activeData, stats) {
+
+    // 1. 渲染基础HTML
+    container.innerHTML = `
+        <h2>模块四：单科成绩分析 (当前筛选: ${G_CurrentClassFilter})</h2>
+
+        <div class="main-card-wrapper" style="margin-bottom: 20px;">
+            <div class="controls-bar chart-controls">
+                <label for="ss-subject-select">选择科目:</label>
+                <select id="ss-subject-select" class="sidebar-select">
+                    ${G_DynamicSubjectList.map((s, i) => `<option value="${s}" ${i === 0 ? 'selected' : ''}>${s}</option>`).join('')}
+                </select>
+            </div>
+        </div>
+
+        <div id="ss-kpi-grid" class="kpi-grid" style="margin-bottom: 20px;">
+            </div>
+
+        <div class="dashboard-chart-grid-2x2">
+            <div class="main-card-wrapper">
+                <h4 style="margin:0;">分数段直方图</h4>
+                <div class="chart-container" id="ss-histogram-chart" style="height: 350px;"></div>
+            </div>
+
+            <div class="main-card-wrapper">
+                <div class="controls-bar chart-controls">
+                    <label for="ss-class-compare-metric">对比指标:</label>
+                    <select id="ss-class-compare-metric" class="sidebar-select" style="min-width: 120px;">
+                        <option value="average">平均分</option>
+                        <option value="passRate">及格率 (%)</option>
+                        <option value="excellentRate">优秀率 (%)</option>
+                        <option value="stdDev">标准差</option>
+                        <option value="max">最高分</option>
+                    </select>
+                </div>
+                <div class="chart-container" id="ss-class-compare-chart" style="height: 350px;"></div>
+            </div>
+
+            <div class="main-card-wrapper">
+                <h4 style="margin:0;">A/B/C/D 等级构成</h4>
+                <div class="chart-container" id="ss-abcd-pie-chart" style="height: 400px;"></div>
+            </div>
+
+            <div class="main-card-wrapper">
+                <h4 style="margin:0;">本科目 Top 10</h4>
+                <div class="table-container" id="ss-top10-table" style="max-height: 400px;"></div>
+            </div>
+            <div class="main-card-wrapper">
+                <h4 style="margin:0;">本科目 Bottom 10</h4>
+                <div class="table-container" id="ss-bottom10-table" style="max-height: 400px;"></div>
+            </div>
+        </div>
+    `;
+
+    // 2. 内部辅助函数：用于渲染所有图表和表格
+    const drawAnalysis = () => {
+        const subjectName = document.getElementById('ss-subject-select').value;
+        if (!subjectName) return;
+
+        const subjectStats = stats[subjectName] || {};
+        const config = G_SubjectConfigs[subjectName] || {};
+        const fullScore = config.full || 100;
+
+        // 2.1 渲染KPIs (不变)
+        const kpiContainer = document.getElementById('ss-kpi-grid');
+        kpiContainer.innerHTML = `
+            <div class="kpi-card"><h3>平均分</h3><div class="value">${subjectStats.average || 0}</div></div>
+            <div class="kpi-card"><h3>最高分</h3><div class="value">${subjectStats.max || 0}</div></div>
+            <div class="kpi-card"><h3>最低分</h3><div class="value">${subjectStats.min || 0}</div></div>
+            <div class="kpi-card"><h3>优秀率 (%)</h3><div class="value">${subjectStats.excellentRate || 0}</div></div>
+            <div class="kpi-card"><h3>良好率 (%)</h3><div class="value">${subjectStats.goodRate || 0}</div></div>
+            <div class="kpi-card"><h3>及格率 (%)</h3><div class="value">${subjectStats.passRate || 0}</div></div>
+            <div class="kpi-card"><h3>不及格率 (%)</h3><div class="value">${subjectStats.failRate || 0}</div></div>
+            <div class="kpi-card"><h3>标准差</h3><div class="value">${subjectStats.stdDev || 0}</div></div>
+        `;
+
+        // 2.2 渲染直方图 (不变)
+        renderHistogram(
+            'ss-histogram-chart',
+            activeData,
+            subjectName,
+            fullScore,
+            `${subjectName} 分数段直方图`,
+            Math.round(fullScore / 15) // 动态分段，约15段
+        );
+
+        // 2.3 [!!] (新) 渲染班级对比图
+        const metricSelect = document.getElementById('ss-class-compare-metric');
+        const drawClassCompareChart = () => {
+            const metric = metricSelect.value;
+            const chartEl = document.getElementById('ss-class-compare-chart');
+
+            if (G_CurrentClassFilter !== 'ALL') {
+                chartEl.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding-top: 50px;">请在侧边栏选择 "全体年段" 以查看班级对比。</p>`;
+                return;
+            }
+
+            // (复用) 调用班级对比数据计算函数
+            const data = calculateClassComparison(metric, subjectName);
+            let metricName = metricSelect.options[metricSelect.selectedIndex].text;
+            // (复用) 调用班级对比图渲染函数
+            renderClassComparisonChart('ss-class-compare-chart', data, `各班级 - ${subjectName} ${metricName}`);
+        };
+
+        // (绑定事件)
+        metricSelect.addEventListener('change', drawClassCompareChart);
+        // (初始绘制)
+        drawClassCompareChart();
+
+
+        // 2.4 [!!] (新) 渲染饼图
+        renderSingleSubjectPie('ss-abcd-pie-chart', subjectStats);
+
+
+        // 2.5 渲染 Top/Bottom 表格 (不变)
+        const sortedStudents = [...activeData]
+            .filter(s => s.scores[subjectName] !== null && s.scores[subjectName] !== undefined)
+            .sort((a, b) => (b.scores[subjectName]) - (a.scores[subjectName]));
+
+        const top10 = sortedStudents.slice(0, 10);
+        const bottom10 = sortedStudents.slice(-10).reverse();
+
+        const createTable = (data, rankType) => {
+            let rankHeader = rankType === 'top' ? '排名' : '倒数';
+            if (data.length === 0) return '<p style="text-align: center; color: var(--text-muted); padding-top: 20px;">无数据</p>';
+
+            return `
+                <table>
+                    <thead><tr><th>${rankHeader}</th><th>姓名</th><th>分数</th><th>班排</th></tr></thead>
+                    <tbody>
+                        ${data.map((s, index) => `
+                            <tr>
+                                <td>${index + 1}</td>
+                                <td>${s.name}</td>
+                                <td><strong>${s.scores[subjectName]}</strong></td>
+                                <td>${s.rank}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        };
+
+        document.getElementById('ss-top10-table').innerHTML = createTable(top10, 'top');
+        document.getElementById('ss-bottom10-table').innerHTML = createTable(bottom10, 'bottom');
+    };
+
+    // 3. 绑定主事件
+    document.getElementById('ss-subject-select').addEventListener('change', drawAnalysis);
+
+    // 4. 初始绘制 (默认使用列表中的第一个科目)
+    drawAnalysis();
+}
+
 /**
  * 9.4. 模块四：成绩趋势对比
  * [!!] 已修改：删除 "进退步一览" 图，布局变为 1x1
@@ -1115,7 +1376,7 @@ function renderPaper(container, stats, activeData) {
 function renderTrend(container, currentData, compareData) {
 
     if (!compareData || compareData.length === 0) {
-        container.innerHTML = `<h2>模块四：成绩趋势对比 (当前筛选: ${G_CurrentClassFilter})</h2><p>请先在侧边栏导入 "对比成绩" 数据。</p>`;
+        container.innerHTML = `<h2>模块十一：成绩趋势对比 (当前筛选: ${G_CurrentClassFilter})</h2><p>请先在侧边栏导入 "对比成绩" 数据。</p>`;
         return;
     }
 
@@ -1206,26 +1467,37 @@ function renderTrend(container, currentData, compareData) {
     // 4. (新增) 绘制图表的函数
     const drawCharts = () => {
         const classFilter = document.getElementById('trend-class-filter').value;
+        const sortFilter = document.getElementById('trend-sort-filter').value; // [!!] (新增) 获取排序值
+
         const scatterData = (classFilter === 'ALL')
             ? mergedData
             : mergedData.filter(s => s.class === classFilter);
 
-        // [!!] (修改) 只调用条形图
-        renderRankChangeBarChart('trend-rank-change-bar-chart', scatterData);
+        // [!!] (修改) 传入排序参数
+        renderRankChangeBarChart('trend-rank-change-bar-chart', scatterData, sortFilter);
     };
 
     // 5. (重构) 渲染基础HTML
     container.innerHTML = `
-        <h2>模块四：成绩趋势对比 (当前筛选: ${G_CurrentClassFilter})</h2>
+        <h2>模块十一：成绩趋势对比 (当前筛选: ${G_CurrentClassFilter})</h2>
 
         <div class="main-card-wrapper" style="margin-bottom: 20px;">
-            <div class="controls-bar chart-controls">
-                <label for="trend-class-filter">班级:</label>
-                <select id="trend-class-filter" class="sidebar-select">
-                    <option value="ALL">-- 全体年段 --</option>
-                    ${[...new Set(currentData.map(s => s.class))].sort().map(c => `<option value="${c}">${c}</option>`).join('')}
-                </select>
-            </div>
+                <div class="controls-bar chart-controls">
+                    <label for="trend-class-filter">班级:</label>
+                    <select id="trend-class-filter" class="sidebar-select" style="min-width: 120px;">
+                        <option value="ALL">-- 全体年段 --</option>
+                        ${[...new Set(currentData.map(s => s.class))].sort().map(c => `<option value="${c}">${c}</option>`).join('')}
+                    </select>
+
+                    <label for="trend-sort-filter">排序:</label>
+                    <select id="trend-sort-filter" class="sidebar-select" style="min-width: 150px;">
+                        <option value="name">按学生姓名 (默认)</option>
+                        <option value="rankDiff_desc">按班排变化 (进步最多)</option>
+                        <option value="rankDiff_asc">按班排变化 (退步最多)</option>
+                        <option value_desc="gradeRankDiff_desc">按年排变化 (进步最多)</option>
+                        <option value="gradeRankDiff_asc">按年排变化 (退步最多)</option>
+                    </select>
+                </div>
             <div class="chart-container" id="trend-rank-change-bar-chart" style="height: 350px;"></div>
         </div>
         <div class="main-card-wrapper">
@@ -1259,9 +1531,11 @@ function renderTrend(container, currentData, compareData) {
     const searchInput = document.getElementById('trend-search');
     const tableHeader = document.getElementById('trend-table-header');
     const classFilterSelect = document.getElementById('trend-class-filter');
+    const sortFilterSelect = document.getElementById('trend-sort-filter'); // [!!] (新增)
 
     searchInput.addEventListener('input', drawTable);
     classFilterSelect.addEventListener('change', drawCharts);
+    sortFilterSelect.addEventListener('change', drawCharts);
 
     tableHeader.addEventListener('click', (e) => {
         const th = e.target.closest('th[data-sort-key]');
@@ -1293,18 +1567,17 @@ function renderTrend(container, currentData, compareData) {
 function renderGroups(container, students) {
     // 1. (重构) 渲染筛选器卡片
     container.innerHTML = `
-        <h2>模块五：学生分层筛选 (当前筛选: ${G_CurrentClassFilter})</h2>
+        <h2>模块八：学生分层筛选 (当前筛选: ${G_CurrentClassFilter})</h2>
         
         <div class="main-card-wrapper" style="margin-bottom: 20px;">
             <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 0; margin-bottom: 0; flex-wrap: wrap;">
                 <label for="group-subject">筛选科目:</label>
                 <select id="group-subject" class="sidebar-select">
                     <option value="totalScore">总分</option>
-                    ${SUBJECT_LIST.map(s => `<option value="${s}">${s}</option>`).join('')}
+                    ${G_DynamicSubjectList.map(s => `<option value="${s}">${s}</option>`).join('')}
                 </select>
-                <label for="group-min">分数 > </label>
                 <input type="number" id="group-min" placeholder="最低分" value="0">
-                <label for="group-max">分数 < </label>
+                <label for="group-max"> < 分数 < </label>
                 <input type="number" id="group-max" placeholder="最高分" value="900">
                 <button id="group-filter-btn" class="sidebar-button">筛选</button>
             </div>
@@ -1350,10 +1623,10 @@ function renderGroups(container, students) {
             let min = 0, max = 0;
 
             if (subject === 'totalScore') {
-                const full = SUBJECT_LIST.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.full || 0), 0);
-                const excel = SUBJECT_LIST.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.excel || 0), 0);
-                const good = SUBJECT_LIST.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.good || 0), 0);
-                const pass = SUBJECT_LIST.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.pass || 0), 0);
+                const full = G_DynamicSubjectList.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.full || 0), 0);
+                const excel = G_DynamicSubjectList.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.excel || 0), 0);
+                const good = G_DynamicSubjectList.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.good || 0), 0);
+                const pass = G_DynamicSubjectList.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.pass || 0), 0);
                 config = { full: full, excel: excel, good: good, pass: pass };
             } else {
                 config = G_SubjectConfigs[subject];
@@ -1434,7 +1707,7 @@ function renderGroups(container, students) {
 function renderCorrelation(container, activeData) {
     // 1. 渲染基础 HTML
     container.innerHTML = `
-        <h2>模块六：学科关联矩阵 (当前筛选: ${G_CurrentClassFilter})</h2>
+        <h2>模块九：学科关联矩阵 (当前筛选: ${G_CurrentClassFilter})</h2>
         <div class="main-card-wrapper">
             <div class="controls-bar chart-controls">
                 <h4 style="margin:0;">全科相关系数热力图</h4>
@@ -1451,13 +1724,12 @@ function renderCorrelation(container, activeData) {
 /**
  * (新增) 9.7. 模块七：学生偏科诊断
  */
-function renderWeakness(container, activeData) {
+function renderWeakness(container, activeData, stats) { // [!!] (新增) 接收 G_Statistics
     // 1. 渲染基础 HTML
     container.innerHTML = `
-        <h2>模块七：学生偏科诊断 (当前筛选: ${G_CurrentClassFilter})</h2>
+        <h2>模块十：学生偏科诊断 (当前筛选: ${G_CurrentClassFilter})</h2>
         <p style="margin-top: -20px; margin-bottom: 20px; color: var(--text-muted);">
-            分析学生的“内部弱势”，即该学生某科的得分率远低于他自己的平均得分率。
-        </p>
+            </p>
 
         <div class="main-card-wrapper" style="margin-bottom: 20px;">
             <div class="controls-bar chart-controls">
@@ -1467,27 +1739,634 @@ function renderWeakness(container, activeData) {
         </div>
 
         <div class="main-card-wrapper">
-            <div class="controls-bar chart-controls">
-                <h4 style="margin:0;">“短板”学生列表</h4>
-                <span style="font-size: 0.8em; color: var(--text-muted);">(按“偏离度”降序，仅显示偏离度 < -10% 的学生)</span>
-            </div>
-            <div class="table-container" id="weakness-table-container">
+                    <div class="controls-bar chart-controls">
+                        <h4 style="margin:0;">学生偏科诊断总表</h4>
+                        <span style="font-size: 0.8em; color: var(--text-muted);">(按“最弱项偏离度”排序)</span>
+                    </div>
+
+                    <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 0 0 15px 0;">
+                        <label for="weakness-search">搜索学生:</label>
+                        <input type="text" id="weakness-search" placeholder="输入姓名或考号...">
+                    </div>
+
+        <div class="table-container" id="weakness-table-container">
+                        </div>
+
+                    <div id="weakness-detail-container" style="margin-top: 20px; display: none;">
+                        </div>
                 </div>
+
+            </div>
+        `;
+
+    // 2. (核心) 计算偏科数据
+    const weaknessData = calculateWeaknessData(activeData, stats); // [!!] (修改) 传入 stats
+
+    // 3. 渲染图表
+    renderWeaknessScatter('weakness-scatter-chart', weaknessData, stats); // [!!] (修改) 传入 stats
+    renderWeaknessTable('weakness-table-container', weaknessData);
+
+    // 4. [!!] (新增) 绑定主表点击事件，用于显示详情表
+    const tableContainer = document.getElementById('weakness-table-container');
+    const detailContainer = document.getElementById('weakness-detail-container');
+
+    tableContainer.addEventListener('click', (e) => {
+        // (寻找被点击的行 <tr>, 必须有 data-id 属性)
+        const row = e.target.closest('tr[data-id]');
+        if (!row) return;
+
+        const studentId = row.dataset.id;
+        // (从原始数据中找到该学生)
+        const studentData = weaknessData.find(d => String(d.student.id) === String(studentId));
+
+        if (studentData) {
+            renderWeaknessDetail(detailContainer, studentData); // 调用新函数
+            detailContainer.style.display = 'block';
+        }
+    });
+}
+
+/**
+ * (新增) 9.8. 模块八：临界生分析
+ * @param {Object} container - HTML 容器
+ * @param {Array} activeData - 当前已筛选的学生数据
+ */
+function renderBoundary(container, activeData, stats) {
+
+    // 1. 渲染HTML
+    container.innerHTML = `
+        <h2>模块五：临界生分析 (当前筛选: ${G_CurrentClassFilter})</h2>
+        <p style="margin-top: -20px; margin-bottom: 20px; color: var(--text-muted);">
+            快速定位“差一点”就能上一个台阶的学生。
+        </p>
+
+        <div class="main-card-wrapper" style="margin-bottom: 20px;">
+            <h4>自定义临界线筛选</h4>
+            <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 0; flex-wrap: wrap;">
+                <label>科目:</label>
+                <select id="boundary-subject" class="sidebar-select">
+                    <option value="totalScore">总分</option>
+                    ${G_DynamicSubjectList.map(s => `<option value="${s}">${s}</option>`).join('')}
+                </select>
+                <label>分数线:</label>
+                <select id="boundary-line-type" class="sidebar-select">
+                    <option value="excel">优秀线</option>
+                    <option value="good">良好线</option>
+                    <option value="pass">及格线</option>
+                    <option value="average">平均分</option>
+                </select>
+                <label>范围 (±):</label>
+                <input type="number" id="boundary-range" value="5" style="width: 60px;">
+                <button id="boundary-filter-btn" class="sidebar-button">筛选</button>
+            </div>
+        </div>
+
+        <div class="main-card-wrapper" style="margin-bottom: 20px;">
+            <h4>快捷预设筛选</h4>
+            <div class="shortcut-btn-group" style="border-top: none; padding-top: 0;">
+                <button class="shortcut-btn" data-preset="high_potential">高分短板生 (总分优秀, 1科不及格)</button>
+                <button class="shortcut-btn" data-preset="pass_potential">及格短板生 (总分及格, 1科不及格)</button>
+                <button class="shortcut-btn" data-preset="holistic_pass">全科及格生</button>
+                <button class="shortcut-btn" data-preset="holistic_excel">全科优秀生</button>
+                <button class="shortcut-btn" data-preset="multi_fail">多科不及格生 (>=3科)</button>
+            </div>
+        </div>
+
+        <div class="main-card-wrapper" id="boundary-results-wrapper" style="display: none;">
+                <h4 id="boundary-results-title">筛选结果</h4>
+                <div class="table-container" id="boundary-results-table"></div>
+
+                <div id="boundary-detail-container" style="margin-top: 20px; display: none; border-top: 1px solid var(--border-color); padding-top: 20px;">
+                    </div>
+            </div>
+        `;
+
+    // 2. 绑定事件
+    const subjectSelect = document.getElementById('boundary-subject');
+    const lineTypeSelect = document.getElementById('boundary-line-type');
+    const rangeInput = document.getElementById('boundary-range');
+    const filterBtn = document.getElementById('boundary-filter-btn');
+    const presetBtns = document.querySelectorAll('.shortcut-btn[data-preset]');
+
+    const resultsWrapper = document.getElementById('boundary-results-wrapper');
+    const resultsTitle = document.getElementById('boundary-results-title');
+    const resultsTable = document.getElementById('boundary-results-table');
+
+    // (辅助函数) 渲染表格
+    // (辅助函数) 渲染表格
+    const renderResultTable = (title, students, targetSubject) => {
+        resultsTitle.innerText = title;
+        resultsWrapper.style.display = 'block';
+
+        if (!students || students.length === 0) {
+            resultsTable.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding: 20px;">未找到符合条件的学生。</p>`;
+            return;
+        }
+
+        // [!!] (修改) 仅当 targetSubject 不是 'totalScore' 时才添加额外列
+        const isSubject = targetSubject && targetSubject !== 'totalScore';
+
+        let targetHeaderTitle = isSubject ? `<th>${targetSubject} 分数</th>` : '';
+
+        resultsTable.innerHTML = `
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>姓名</th>
+                        <th>班级</th>
+                        <th>总分</th>
+                        <th>班排</th>
+                        ${targetHeaderTitle}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${students.map(s => `
+                    <tr data-id="${s.id}"> <td data-action="show-detail" style="cursor: pointer; color: var(--primary-color); font-weight: 600;">
+                                ${s.name}
+                            </td>
+                        <td>${s.class}</td>
+                        <td>${s.totalScore}</td>
+                        <td>${s.rank}</td>
+                        ${isSubject ? `<td><strong>${s.scores[targetSubject] || 'N/A'}</strong></td>` : ''}
+                    </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    };
+
+    // 3. 事件：自定义筛选
+    filterBtn.addEventListener('click', () => {
+        const subject = subjectSelect.value;
+        const lineType = lineTypeSelect.value;
+        const range = parseFloat(rangeInput.value) || 0;
+
+        let threshold = 0;
+        // [!!] (重构)
+        if (lineType === 'average') {
+            // (平均分逻辑: 从 stats 中读取)
+            if (subject === 'totalScore') {
+                threshold = stats.totalScore ? stats.totalScore.average : 0;
+            } else {
+                threshold = stats[subject] ? stats[subject].average : 0;
+            }
+        } else {
+            // (原有逻辑: 从 G_SubjectConfigs 中累加)
+            if (subject === 'totalScore') {
+                threshold = G_DynamicSubjectList.reduce((sum, key) => sum + (G_SubjectConfigs[key] ? G_SubjectConfigs[key][lineType] : 0), 0);
+            } else {
+                threshold = G_SubjectConfigs[subject] ? G_SubjectConfigs[subject][lineType] : 0;
+            }
+        }
+
+        const min = threshold - range;
+        const max = threshold + range;
+
+        const filteredStudents = activeData.filter(s => {
+            const score = (subject === 'totalScore') ? s.totalScore : s.scores[subject];
+            return score >= min && score <= max;
+        });
+
+        renderResultTable(`“${subject}” 在 “${lineTypeSelect.options[lineTypeSelect.selectedIndex].text}” ( ${threshold.toFixed(0)}分 ) ± ${range}分 的学生 (${filteredStudents.length}人)`, filteredStudents, subject);
+    });
+
+    // (辅助函数) 获取总分线
+    const getTotalLine = (lineType) => {
+        return G_DynamicSubjectList.reduce((sum, key) => sum + (G_SubjectConfigs[key] ? G_SubjectConfigs[key][lineType] : 0), 0);
+    };
+
+    // 4. 事件：预设筛选
+    presetBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const preset = btn.dataset.preset;
+            let title = '';
+            let filteredStudents = [];
+
+            const totalPassLine = getTotalLine('pass');
+            const totalExcelLine = getTotalLine('excel');
+
+            if (preset === 'holistic_pass') {
+                title = '全科及格生';
+                filteredStudents = activeData.filter(s => {
+                    return G_DynamicSubjectList.every(subject => {
+                        const passLine = G_SubjectConfigs[subject] ? G_SubjectConfigs[subject].pass : 0;
+                        return (s.scores[subject] || 0) >= passLine;
+                    });
+                });
+            } else if (preset === 'pass_potential' || preset === 'high_potential') {
+                const minTotal = (preset === 'pass_potential') ? totalPassLine : totalExcelLine;
+                title = (preset === 'pass_potential') ? '及格短板生 (总分及格, 1科不及格)' : '高分短板生 (总分优秀, 1科不及格)';
+
+                filteredStudents = activeData.filter(s => {
+                    if (s.totalScore < minTotal) return false;
+
+                    let failCount = 0;
+                    G_DynamicSubjectList.forEach(subject => {
+                        const passLine = G_SubjectConfigs[subject] ? G_SubjectConfigs[subject].pass : 0;
+                        if ((s.scores[subject] || 0) < passLine) {
+                            failCount++;
+                        }
+                    });
+                    return failCount === 1; // [!!] 严格限制为只有1科不及格
+                });
+            } else if (preset === 'holistic_excel') {
+                title = '全科优秀生';
+                filteredStudents = activeData.filter(s => {
+                    return G_DynamicSubjectList.every(subject => {
+                        const excelLine = G_SubjectConfigs[subject] ? G_SubjectConfigs[subject].excel : 0;
+                        return (s.scores[subject] || 0) >= excelLine;
+                    });
+                });
+
+                // [!!] (新增)
+            } else if (preset === 'multi_fail') {
+                title = '多科不及格生 (>=3科)';
+                filteredStudents = activeData.filter(s => {
+                    let failCount = 0;
+                    G_DynamicSubjectList.forEach(subject => {
+                        const passLine = G_SubjectConfigs[subject] ? G_SubjectConfigs[subject].pass : 0;
+                        if ((s.scores[subject] === null || s.scores[subject] === undefined) || s.scores[subject] < passLine) {
+                            failCount++;
+                        }
+                    });
+                    return failCount >= 3;
+                });
+            }
+            renderResultTable(`${title} (${filteredStudents.length}人)`, filteredStudents, null);
+        });
+    });
+    // [!!] (新增) 为结果表添加点击事件
+    const detailContainer = document.getElementById('boundary-detail-container');
+
+    resultsTable.addEventListener('click', (e) => {
+        // (寻找被点击的 <td> 单元格)
+        const cell = e.target.closest('td[data-action="show-detail"]');
+        // (寻找被点击的 <tr> 行)
+        const row = e.target.closest('tr[data-id]');
+
+        if (!cell || !row) return; // 必须点击在指定单元格上
+
+        const studentId = row.dataset.id;
+        const student = activeData.find(s => String(s.id) === String(studentId));
+
+        if (student) {
+            // (调用新函数渲染详情)
+            renderBoundaryStudentDetail(detailContainer, student);
+            detailContainer.style.display = 'block';
+        }
+    });
+}
+
+
+
+/**
+ * (新增) 9.9. 模块九：全科均衡分析
+ * @param {Object} container - HTML 容器
+ * @param {Array} activeData - 当前已筛选的学生数据
+ * @param {Object} stats - G_Statistics
+ */
+function renderHolisticBalance(container, activeData, stats) {
+
+    // 1. 渲染HTML
+    container.innerHTML = `
+        <h2>模块：全科均衡分析 (当前筛选: ${G_CurrentClassFilter})</h2>
+        <p style="margin-top: -20px; margin-bottom: 20px; color: var(--text-muted);">
+            分析学生群体的“短板”数量分布。点击下方柱状图可查看学生列表。
+        </p>
+
+        <div class="main-card-wrapper" style="margin-bottom: 20px;">
+            <h4 style="margin:0;">不及格科目数量分布</h4>
+            <div class="chart-container" id="holistic-failure-count-chart" style="height: 500px;"></div>
+        </div>
+
+        <div class="main-card-wrapper" id="holistic-results-wrapper" style="display: none;">
+            <h4 id="holistic-results-title">学生列表</h4>
+            <div class="table-container" id="holistic-results-table"></div>
         </div>
     `;
 
-    // 2. (核心) 计算偏科数据
-    const weaknessData = calculateWeaknessData(activeData);
+    // 2. (核心) [!!] (修改) 计算不及格科目数, 并存储学生对象
+    const failureData = {}; // { 0: [student1, student2], 1: [student3], ... }
 
-    // 3. 渲染图表
-    renderWeaknessScatter('weakness-scatter-chart', weaknessData);
+    activeData.forEach(student => {
+        let count = 0;
+        G_DynamicSubjectList.forEach(subject => {
+            const passLine = G_SubjectConfigs[subject] ? G_SubjectConfigs[subject].pass : 0;
+            if ((student.scores[subject] === null || student.scores[subject] === undefined) || student.scores[subject] < passLine) {
+                count++; // (缺考也算不及格)
+            }
+        });
 
-    // 4. 渲染表格
-    renderWeaknessTable('weakness-table-container', weaknessData);
+        if (!failureData[count]) {
+            failureData[count] = [];
+        }
+        failureData[count].push(student); // [!!] (修改) 存入学生对象
+    });
+
+    // 3. [!!] (修改) 渲染图表, 并获取 ECharts 实例
+    const chartInstance = renderFailureCountChart('holistic-failure-count-chart', failureData);
+
+    // 4. [!!] (新增) 绑定图表点击事件
+    const resultsWrapper = document.getElementById('holistic-results-wrapper');
+    const resultsTitle = document.getElementById('holistic-results-title');
+    const resultsTable = document.getElementById('holistic-results-table');
+
+    if (chartInstance) {
+        chartInstance.on('click', (params) => {
+            const failCountText = params.name; // '0 科', '1 科', ...
+            const countKey = failCountText.split(' ')[0]; // '0', '1', ...
+            const students = failureData[countKey];
+
+            if (!students || students.length === 0) return;
+
+            resultsWrapper.style.display = 'block';
+            resultsTitle.innerText = `不及格 ${failCountText} 的学生 (${students.length}人)`;
+
+            // (渲染学生列表)
+            resultsTable.innerHTML = `
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>姓名</th>
+                                <th>班级</th>
+                                <th>总分</th>
+                                <th>班排</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${students.map(s => `
+                            <tr>
+                                <td>${s.name}</td>
+                                <td>${s.class}</td>
+                                <td>${s.totalScore}</td>
+                                <td>${s.rank}</td>
+                            </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        });
+    }
+}
+
+/**
+ * (新增) 9.10. 模块十：成绩分布变动
+ * @param {Object} container - HTML 容器
+ * @param {Array} currentData - (已筛选) 本次学生数据
+ * @param {Array} compareData - (已筛选) 对比学生数据
+ * @param {Object} currentStats - G_Statistics
+ * @param {Object} compareStats - G_CompareStatistics
+ */
+/**
+ * (新增) 9.10. 模块十：成绩分布变动
+ * [!!] (完整修复版)
+ */
+function renderTrendDistribution(container, currentData, compareData, currentStats, compareStats, currentFilter) {
+
+    // 1. 检查是否有对比数据
+    if (!compareData || compareData.length === 0) {
+        container.innerHTML = `<h2>模块：成绩分布变동</h2><p>请先在侧边栏导入 "对比成绩" 数据。</p>`;
+        return;
+    }
+
+    // 2. 渲染HTML
+    container.innerHTML = `
+        <h2>模块：成绩分布变动 (当前筛选: ${G_CurrentClassFilter})</h2>
+        <p style="margin-top: -20px; margin-bottom: 20px; color: var(--text-muted);">
+            对比两次考试的“群体形态”变化。
+        </p>
+
+        <div class="main-card-wrapper" style="margin-bottom: 20px;">
+            <div class="controls-bar chart-controls">
+                <label for="dist-subject-select">选择科目:</label>
+                <select id="dist-subject-select" class="sidebar-select">
+                    <option value="totalScore">总分</option>
+                    ${G_DynamicSubjectList.map(s => `<option value="${s}">${s}</option>`).join('')}
+                </select>
+            </div>
+            <div class="chart-container" id="dist-overlap-histogram-chart" style="height: 500px;"></div>
+        </div>
+
+        <div class="main-card-wrapper">
+            <h4 style="margin:0;">总分排名分层流动图 (桑基图)</h4>
+            <p style="color: var(--text-muted); font-size: 0.9em; margin-top: 0;">
+                点击图中的“节点”或“流向”可查看学生列表。
+            </p>
+            <div class="chart-container" id="dist-sankey-chart" style="height: 600px;"></div>
+        </div>
+
+        <div class="main-card-wrapper" id="dist-sankey-results-wrapper" style="display: none; margin-top: 20px;">
+            <h4 id="dist-sankey-results-title">学生列表</h4>
+            <div class="table-container" id="dist-sankey-results-table"></div>
+        </div>
+    `;
+
+    // 3. 匹配两个数据源 (包含 oldGradeRank)
+    const mergedData = currentData.map(student => {
+        const oldStudent = compareData.find(s => String(s.id) === String(student.id));
+        if (!oldStudent) return null; 
+        
+        return {
+            ...student,
+            oldTotalScore: oldStudent.totalScore,
+            oldRank: oldStudent.rank,
+            oldGradeRank: oldStudent.gradeRank || 0 
+        };
+    }).filter(s => s !== null); 
+
+
+    // 4. 绑定直方图事件
+    const subjectSelect = document.getElementById('dist-subject-select');
+    
+    const drawHistogram = () => {
+        const subject = subjectSelect.value;
+        const currentScores = (subject === 'totalScore') 
+            ? currentData.map(s => s.totalScore) 
+            : currentData.map(s => s.scores[subject]);
+            
+        const compareScores = (subject === 'totalScore')
+            ? compareData.map(s => s.totalScore)
+            : compareData.map(s => s.scores[subject]);
+            
+        renderOverlappingHistogram('dist-overlap-histogram-chart', currentScores, compareScores, subject);
+    };
+
+    subjectSelect.addEventListener('change', drawHistogram);
+    
+    // 5. 将分层逻辑移到此处，以便共享
+    const total = currentData.length;
+    const rankTiers = [
+        { name: 'Top 10%', min: 1, max: Math.ceil(total * 0.1) },
+        { name: '10%-30%', min: Math.ceil(total * 0.1) + 1, max: Math.ceil(total * 0.3) },
+        { name: '30%-60%', min: Math.ceil(total * 0.3) + 1, max: Math.ceil(total * 0.6) },
+        { name: 'Bottom 40%', min: Math.ceil(total * 0.6) + 1, max: total }
+    ];
+
+    // (辅助函数)
+    const getRankCategory = (rank) => {
+        for (const tier of rankTiers) {
+            if (rank >= tier.min && rank <= tier.max) {
+                return tier.name;
+            }
+        }
+        return 'N/A';
+    };
+
+    // 6. 初始绘制
+    drawHistogram();
+    
+    // 7. [!!] (修复) 确保
+    // (A) 变量定义
+    // (B) 查找元素
+    // (C) IF 语句
+    // ...按此顺序执行
+
+    // (A) 定义变量
+    const sankeyInstance = renderRankingSankey('dist-sankey-chart', mergedData, rankTiers, getRankCategory, currentFilter);
+
+    // (B) 查找表格元素
+    const resultsWrapper = document.getElementById('dist-sankey-results-wrapper');
+    const resultsTitle = document.getElementById('dist-sankey-results-title');
+    const resultsTable = document.getElementById('dist-sankey-results-table');
+
+    // (C) 使用变量 (IF 语句)
+    if (sankeyInstance) {
+        sankeyInstance.on('click', (params) => {
+            let students = [];
+            let title = '';
+            let tableHtml = '';
+
+            const { dataType, data } = params;
+            
+            // (核心修复) 检查当前是否为年段模式
+            const useGradeRank = (currentFilter === 'ALL');
+
+            // (辅助函数) 获取分层索引
+            const getTierIndex = (tierName) => rankTiers.findIndex(t => t.name === tierName);
+
+            if (dataType === 'link') {
+                // --- 1. 点击了 "流向" ---
+                title = `${data.source} → ${data.target} (${data.value}人)`;
+                const sourceTierName = data.source.replace('上次: ', '');
+                const targetTierName = data.target.replace('本次: ', '');
+
+                students = mergedData.filter(s => {
+                    // (修复) 动态选择排名
+                    const oldRank = useGradeRank ? (s.oldGradeRank || 0) : s.oldRank;
+                    const newRank = useGradeRank ? (s.gradeRank || 0) : s.rank;
+                    
+                    return oldRank > 0 && newRank > 0 &&
+                        getRankCategory(oldRank) === sourceTierName &&
+                        getRankCategory(newRank) === targetTierName;
+                });
+
+                // (判断流动方向)
+                const oldIndex = getTierIndex(sourceTierName);
+                const newIndex = getTierIndex(targetTierName);
+                let rowClass = '';
+                if (oldIndex > newIndex) rowClass = 'progress'; // 进步
+                if (oldIndex < newIndex) rowClass = 'regress'; // 退步
+
+                // (修复) 动态表头
+                const newRankHeader = useGradeRank ? '本次年排' : '本次班排';
+                const oldRankHeader = useGradeRank ? '上次年排' : '上次班排';
+
+                tableHtml = `
+                    <thead>
+                        <tr><th>姓名</th><th>班级</th><th>本次总分</th><th>${newRankHeader}</th><th>上次总分</th><th>${oldRankHeader}</th></tr>
+                    </thead>
+                    <tbody>
+                        ${students.map(s => `
+                        <tr class="${rowClass}">
+                            <td>${s.name}</td>
+                            <td>${s.class}</td>
+                            <td>${s.totalScore}</td>
+                            <td>${useGradeRank ? (s.gradeRank || 0) : s.rank}</td>
+                            <td>${s.oldTotalScore}</td>
+                            <td>${useGradeRank ? (s.oldGradeRank || 0) : s.oldRank}</td>
+                        </tr>
+                        `).join('')}
+                    </tbody>
+                `;
+
+            } else if (dataType === 'node') {
+                // --- 2. 点击了 "节点" ---
+                title = `${params.name} (${params.value}人)`; 
+                
+                const nodeName = data.name.replace('上次: ', '').replace('本次: ', '');
+                const isOld = data.name.startsWith('上次:');
+                
+                students = mergedData.filter(s => {
+                    // (核心修复) 动态选择排名
+                    const rank = isOld 
+                        ? (useGradeRank ? (s.oldGradeRank || 0) : s.oldRank)
+                        : (useGradeRank ? (s.gradeRank || 0) : s.rank);
+                    return rank > 0 && getRankCategory(rank) === nodeName;
+                });
+                
+                // (修复) 动态表头
+                const newRankHeader = useGradeRank ? '本次年排' : '本次班排';
+                const oldRankHeader = useGradeRank ? '上次年排' : '上次班排';
+
+                tableHtml = `
+                    <thead>
+                        <tr><th>姓名</th><th>班级</th><th>${newRankHeader}</th><th>${oldRankHeader}</th><th>上次分层</th></tr>
+                    </thead>
+                    <tbody>
+                        ${students.map(s => {
+                            // (修复) 动态选择排名
+                            const oldRank = useGradeRank ? (s.oldGradeRank || 0) : s.oldRank;
+                            const newRank = useGradeRank ? (s.gradeRank || 0) : s.rank;
+
+                            const oldTierName = oldRank > 0 ? getRankCategory(oldRank) : 'N/A';
+                            const newTierName = newRank > 0 ? getRankCategory(newRank) : nodeName;
+                            
+                            const oldIndex = getTierIndex(oldTierName);
+                            const newIndex = getTierIndex(newTierName);
+                            let rowClass = '';
+                            if (oldIndex > newIndex && oldIndex !== -1 && newIndex !== -1) {
+                                rowClass = 'progress'; 
+                            } else if (oldIndex < newIndex && oldIndex !== -1 && newIndex !== -1) {
+                                rowClass = 'regress'; 
+                            }
+
+                            return `
+                            <tr class="${rowClass}">
+                                <td>${s.name}</td>
+                                <td>${s.class}</td>
+                                <td>${newRank}</td>
+                                <td>${oldRank}</td>
+                                <td>${oldTierName}</td>
+                            </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                `;
+            }
+
+            if (students.length > 0) {
+                resultsWrapper.style.display = 'block';
+                resultsTitle.innerText = title;
+                // 渲染表格
+                resultsTable.innerHTML = `
+                    <div class="table-container">
+                        <table>
+                            ${tableHtml}
+                        </table>
+                    </div>
+                `;
+            }
+        });
+    }
 }
 
 /**
  * (新增) 10.15. 渲染学科关联热力图 (Heatmap)
+ * [!!] (已修复)
  */
 function renderCorrelationHeatmap(elementId, activeData) {
     const chartDom = document.getElementById(elementId);
@@ -1499,29 +2378,34 @@ function renderCorrelationHeatmap(elementId, activeData) {
     echartsInstances[elementId] = echarts.init(chartDom);
 
     // 1. (核心) 计算相关系数矩阵
-    const subjects = SUBJECT_LIST;
+    const subjects = G_DynamicSubjectList; // (已确认正确)
     const n = subjects.length;
     const heatmapData = []; // ECharts 格式: [xIndex, yIndex, value]
     const correlationMatrix = Array(n).fill(0).map(() => Array(n).fill(0));
 
     // (提取所有科目的分数数组，提高效率)
+    // (此 scoresMap 未在此函数中使用, 但保留无害)
     const scoresMap = {};
     subjects.forEach(subject => {
         scoresMap[subject] = activeData.map(s => s.scores[subject]).filter(s => s !== null && s !== undefined);
     });
 
+    // [!!] (逻辑修复)
     for (let i = 0; i < n; i++) {
         for (let j = 0; j < n; j++) {
+
+            let value = 0.0; // (默认值)
+
             if (i === j) {
-                correlationMatrix[i][j] = 1.0;
+                value = 1.0;
+                correlationMatrix[i][j] = value;
+
             } else if (i < j) {
                 // (只计算上三角)
-                // [!!] (注意：这里为了简化，没有对齐学生。理想情况应先对齐)
-                // (当前的实现是基于 activeData 中提取，已自动对齐)
                 const xSubject = subjects[i];
                 const ySubject = subjects[j];
 
-                // (需要先对齐两个数组，只保留都参加了考试的学生)
+                // (对齐学生)
                 const xScores = [];
                 const yScores = [];
                 activeData.forEach(student => {
@@ -1534,19 +2418,26 @@ function renderCorrelationHeatmap(elementId, activeData) {
                 });
 
                 const coeff = calculateCorrelation(xScores, yScores);
-                correlationMatrix[i][j] = coeff;
-                correlationMatrix[j][i] = coeff; // (矩阵对称)
+                value = coeff;
+                correlationMatrix[i][j] = value;
+                correlationMatrix[j][i] = value; // (矩阵对称)
+
+            } else { // (i > j)
+                // [!!] (核心修复)
+                // (我们不重新计算, 而是从已存的对称矩阵中检索值)
+                value = correlationMatrix[i][j];
             }
 
+            // (现在, push 逻辑在所有分支之后执行, 确保 value 是正确的)
             heatmapData.push([
                 i, // X 轴索引
                 j, // Y 轴索引
-                parseFloat(correlationMatrix[i][j].toFixed(2)) // 值
+                parseFloat(value.toFixed(2)) // 值
             ]);
         }
     }
 
-    // 2. ECharts 配置
+    // 2. ECharts 配置 (不变)
     const option = {
         title: {
             text: '学科相关性热力图',
@@ -1579,7 +2470,6 @@ function renderCorrelationHeatmap(elementId, activeData) {
             data: subjects,
             splitArea: { show: true }
         },
-        // [!!] (核心) 视觉映射 (颜色)
         visualMap: {
             min: -1,
             max: 1,
@@ -1588,7 +2478,6 @@ function renderCorrelationHeatmap(elementId, activeData) {
             left: 'center',
             bottom: '5%',
             inRange: {
-                // (红 -> 白 -> 蓝)
                 color: ['#dc3545', '#ffffff', '#007bff']
             }
         },
@@ -1597,8 +2486,8 @@ function renderCorrelationHeatmap(elementId, activeData) {
             type: 'heatmap',
             data: heatmapData,
             label: {
-                show: true, // (在格子上显示数字)
-                formatter: (params) => params.data[2] // (显示相关系数)
+                show: true, 
+                formatter: (params) => params.data[2] 
             },
             emphasis: {
                 itemStyle: {
@@ -1784,12 +2673,12 @@ function renderAverageRadar(elementId, stats) {
     }
     echartsInstances[elementId] = echarts.init(chartDom);
 
-    const indicators = SUBJECT_LIST.map(subject => {
+    const indicators = G_DynamicSubjectList.map(subject => {
         const full = G_SubjectConfigs[subject]?.full || 100;
         return { name: subject, max: full }; // (新增) max 动态读取配置
     });
 
-    const averageData = SUBJECT_LIST.map(subject => {
+    const averageData = G_DynamicSubjectList.map(subject => {
         return stats[subject] ? stats[subject].average : 0;
     });
 
@@ -1824,7 +2713,7 @@ function renderSubjectComparisonBarChart(elementId, stats, metric) {
     echartsInstances[elementId] = echarts.init(chartDom);
 
     // 1. 提取数据
-    const data = SUBJECT_LIST.map(subject => {
+    const data = G_DynamicSubjectList.map(subject => {
         return {
             name: subject,
             value: (stats[subject] && stats[subject][metric] !== undefined) ? stats[subject][metric] : 0
@@ -2002,7 +2891,7 @@ function renderSubjectBoxPlot(elementId, stats) {
 
     // 1. 准备 ECharts dataTool 需要的数据
     // 格式: [ [subj1_score1, subj1_score2, ...], [subj2_score1, subj2_score2, ...] ]
-    const allScores = SUBJECT_LIST.map(subject => {
+    const allScores = G_DynamicSubjectList.map(subject => {
         return stats[subject] ? stats[subject].scores : [];
     });
 
@@ -2022,7 +2911,7 @@ function renderSubjectBoxPlot(elementId, stats) {
         grid: { left: '10%', right: '5%', bottom: '15%' },
         xAxis: {
             type: 'category',
-            data: SUBJECT_LIST,
+            data: G_DynamicSubjectList,
             boundaryGap: true,
             nameGap: 30,
             axisLabel: { rotate: 30 }
@@ -2041,7 +2930,7 @@ function renderSubjectBoxPlot(elementId, stats) {
                     formatter: function (param) {
                         // param.data[0] 是 xAxis 索引
                         return [
-                            '<strong>' + SUBJECT_LIST[param.data[0]] + '</strong>',
+                            '<strong>' + G_DynamicSubjectList[param.data[0]] + '</strong>',
                             '最大值: ' + param.data[5],
                             '上四分位 (Q3): ' + param.data[4],
                             '中位数 (Q2): ' + param.data[3],
@@ -2196,7 +3085,7 @@ function renderStackedBar(elementId, stats, configs) {
     if (echartsInstances[elementId]) echartsInstances[elementId].dispose();
     echartsInstances[elementId] = echarts.init(chartDom);
 
-    const categories = SUBJECT_LIST;
+    const categories = G_DynamicSubjectList;
 
     let aData = []; // A (优秀)
     let bData = []; // B (良好)
@@ -2335,12 +3224,12 @@ function renderStudentRadar(elementId, student, stats) {
     echartsInstances[elementId] = echarts.init(chartDom);
 
     // 1. 准备雷达图指示器 (max 设为 100, 因为我们用得分率)
-    const indicators = SUBJECT_LIST.map(subject => {
+    const indicators = G_DynamicSubjectList.map(subject => {
         return { name: subject, max: 100 };
     });
 
     // 2. 计算 "学生得分率"
-    const studentData = SUBJECT_LIST.map(subject => {
+    const studentData = G_DynamicSubjectList.map(subject => {
         const score = student.scores[subject] || 0;
         const full = G_SubjectConfigs[subject]?.full;
         if (!full || full === 0) return 0; // 避免除以零
@@ -2348,7 +3237,7 @@ function renderStudentRadar(elementId, student, stats) {
     });
 
     // 3. 计算 "年级平均得分率"
-    const averageData = SUBJECT_LIST.map(subject => {
+    const averageData = G_DynamicSubjectList.map(subject => {
         const avgScore = stats[subject]?.average || 0;
         const full = G_SubjectConfigs[subject]?.full;
         if (!full || full === 0) return 0; // 避免除以零
@@ -2464,7 +3353,7 @@ function renderDifficultyScatter(elementId, stats) {
     echartsInstances[elementId] = echarts.init(chartDom);
 
     // 1. 准备数据: [ [难度, 区分度, 满分(用于气泡大小), '科目名'], ... ]
-    const scatterData = SUBJECT_LIST.map(subject => {
+    const scatterData = G_DynamicSubjectList.map(subject => {
         const s = stats[subject];
         if (!s) return null;
 
@@ -2741,7 +3630,8 @@ function renderTrendRankHistogram(elementId, allRankDiffs) {
  * [!!] X轴 已修改为按 "学生姓名" 排序
  * [!!] 强制显示所有 X 轴标签 (interval: 0)
  */
-function renderRankChangeBarChart(elementId, students) {
+// [!!] (修改) 增加 sortBy 参数, 默认为 'name'
+function renderRankChangeBarChart(elementId, students, sortBy = 'name') {
     const chartDom = document.getElementById(elementId);
     if (!chartDom) return;
 
@@ -2751,10 +3641,28 @@ function renderRankChangeBarChart(elementId, students) {
     echartsInstances[elementId] = echarts.init(chartDom);
 
     // 1. 过滤掉没有对比数据的学生
-    const data = students.filter(s => s.oldRank !== null);
+    const data = students.filter(s => s.oldRank !== null || s.oldGradeRank !== null);
 
-    // 2. 按 "学生姓名" 排序
-    data.sort((a, b) => a.name.localeCompare(b.name));
+    // [!!] (修改) 2. 根据 sortBy 参数动态排序
+    const sortOption = sortBy.split('_');
+    const sortKey = sortOption[0];
+    const sortDir = sortOption[1] || 'asc'; // 'asc' for name, 'desc' for ranks by default
+
+    data.sort((a, b) => {
+        if (sortKey === 'name') {
+            return a.name.localeCompare(b.name);
+        }
+
+        // (处理 null/undefined)
+        let valA = a[sortKey];
+        let valB = b[sortKey];
+
+        // 将 null 视为最末尾
+        valA = (valA === null || valA === undefined) ? (sortDir === 'asc' ? Infinity : -Infinity) : valA;
+        valB = (valB === null || valB === undefined) ? (sortDir === 'asc' ? Infinity : -Infinity) : valB;
+
+        return sortDir === 'asc' ? valA - valB : valB - valA;
+    });
 
     // 3. 准备 ECharts 数据
     const studentNames = data.map(s => s.name);
@@ -2845,58 +3753,66 @@ function renderRankChangeBarChart(elementId, students) {
  * (新增) 10.16. [辅助函数] 计算偏科分析数据
  * (这是新模块的核心)
  */
-function calculateWeaknessData(students) {
+// [!!] (修改) 接收 G_Statistics
+function calculateWeaknessData(students, stats) {
 
     // (辅助函数)
     const mean = (arr) => {
         if (!arr || arr.length === 0) return 0;
-        return arr.reduce((sum, val) => sum + val, 0) / arr.length;
+        const validArr = arr.filter(v => typeof v === 'number' && !isNaN(v)); // [!!] (健壮性)
+        if (validArr.length === 0) return 0;
+        return validArr.reduce((sum, val) => sum + val, 0) / validArr.length;
     };
     const stdDev = (arr, meanVal) => {
         if (!arr || arr.length < 2) return 0;
-        return Math.sqrt(arr.reduce((sum, val) => sum + Math.pow(val - meanVal, 2), 0) / arr.length);
+        const validArr = arr.filter(v => typeof v === 'number' && !isNaN(v)); // [!!] (健壮性)
+        if (validArr.length < 2) return 0;
+        return Math.sqrt(validArr.reduce((sum, val) => sum + Math.pow(val - meanVal, 2), 0) / validArr.length);
     };
 
     const results = [];
 
     students.forEach(student => {
-        // 1. 计算该生的所有 "得分率"
-        const percents = [];
+        // 1. [!!] (修改) 计算该生的所有 "Z-Score" (标准分)
+        const zScores = [];
         const validSubjects = [];
-        SUBJECT_LIST.forEach(subject => {
-            const config = G_SubjectConfigs[subject];
+
+        G_DynamicSubjectList.forEach(subject => {
+            const subjectStat = stats[subject];
             const score = student.scores[subject];
-            // (必须有分数 且 满分不为0)
-            if (config && config.full > 0 && score !== null && score !== undefined) {
-                percents.push((score / config.full) * 100);
+
+            // (必须有分数, 且该科目有统计数据, 且标准差不为0)
+            if (subjectStat && subjectStat.stdDev > 0 && score !== null && score !== undefined) {
+                const z = (score - subjectStat.average) / subjectStat.stdDev;
+                zScores.push(z);
                 validSubjects.push(subject);
             }
         });
 
-        if (percents.length < 2) {
+        if (zScores.length < 2) {
             results.push(null); // (数据不足，无法分析偏科)
             return;
         }
 
-        // 2. 计算该生的 "平均得分率" 和 "偏科标准差"
-        const avgPercent = mean(percents);
-        const stdDevPercent = stdDev(percents, avgPercent);
+        // 2. [!!] (修改) 计算该生的 "平均Z-Score" 和 "Z-Score标准差" (即偏科程度)
+        const avgZScore = mean(zScores);
+        const stdDevZScore = stdDev(zScores, avgZScore);
 
-        // 3. 计算每科的 "偏离度"
+        // 3. [!!] (修改) 计算每科的 "Z-Score偏离度"
         const subjectDeviations = [];
-        percents.forEach((percent, index) => {
+        zScores.forEach((z, index) => {
             const subject = validSubjects[index];
             subjectDeviations.push({
                 subject: subject,
-                percent: parseFloat(percent.toFixed(1)),
-                deviation: parseFloat((percent - avgPercent).toFixed(1))
+                zScore: parseFloat(z.toFixed(2)), // [!!] 该科Z分
+                deviation: parseFloat((z - avgZScore).toFixed(2)) // [!!] 偏离度
             });
         });
 
         results.push({
             student: student,
-            avgPercent: parseFloat(avgPercent.toFixed(1)),
-            stdDevPercent: parseFloat(stdDevPercent.toFixed(1)),
+            avgZScore: parseFloat(avgZScore.toFixed(2)), // [!!] (新) 学生综合能力 (Z分均值)
+            stdDevZScore: parseFloat(stdDevZScore.toFixed(2)), // [!!] (新) 学生偏科程度 (Z分标准差)
             subjectDeviations: subjectDeviations
         });
     });
@@ -2908,7 +3824,8 @@ function calculateWeaknessData(students) {
 /**
  * (最终修复版 V4 - 完美版) 解决 MarkLine、四色渲染、queryComponents 错误，并实现 X 轴动态缩放。
  */
-function renderWeaknessScatter(elementId, weaknessData) {
+// [!!] (修改) 接收 G_Statistics
+function renderWeaknessScatter(elementId, weaknessData, stats) {
     const chartDom = document.getElementById(elementId);
     if (!chartDom) return;
 
@@ -2926,129 +3843,124 @@ function renderWeaknessScatter(elementId, weaknessData) {
         return validArr.reduce((sum, val) => sum + val, 0) / validArr.length;
     };
 
-    // 1. 计算平均线
-    const yValues = weaknessData.map(d => d.stdDevPercent).filter(v => typeof v === 'number' && !isNaN(v));
-    const avgStdDev = mean(yValues); 
+    // 1. [!!] (修改) 计算平均线
+    // Z-Score 的均值理论上为 0
+    const avgZScoreLine = 0;
+    // 偏科程度的均值
+    const yValues = weaknessData.map(d => d.stdDevZScore).filter(v => typeof v === 'number' && !isNaN(v));
+    const avgStdDev = mean(yValues);
 
-    let avgScoreLine = 65; 
-    if (G_Statistics && G_Statistics.totalScore && 
-        G_Statistics.totalScore.average !== undefined && 
-        G_Statistics.totalScore.difficulty > 0) 
-    {
-        let calculatedAvg = G_Statistics.totalScore.average / G_Statistics.totalScore.difficulty;
-        if (!isNaN(calculatedAvg) && calculatedAvg > 40 && calculatedAvg < 90) {
-            avgScoreLine = calculatedAvg;
-        }
-    }
-    
     // 2. 数据预处理
     const quadrantData = { '右上': [], '左上': [], '右下': [], '左下': [] };
     const xValuesRaw = [];
     const yValuesRaw = [];
 
     weaknessData.forEach(data => {
-        const x = data.avgPercent;
-        const y = data.stdDevPercent;
+        // [!!] (修改) 使用 Z-Score
+        const x = data.avgZScore;
+        const y = data.stdDevZScore;
         const studentName = data.student.name;
 
-        if (typeof x !== 'number' || isNaN(x) || typeof y !== 'number' || isNaN(y)) return; 
+        if (typeof x !== 'number' || isNaN(x) || typeof y !== 'number' || isNaN(y)) return;
 
         xValuesRaw.push(x);
         yValuesRaw.push(y);
 
-        const quadrantKey = (x >= avgScoreLine ? '右' : '左') + (y >= avgStdDev ? '上' : '下');
+        const quadrantKey = (x >= avgZScoreLine ? '右' : '左') + (y >= avgStdDev ? '上' : '下');
         quadrantData[quadrantKey].push([x, y, studentName]);
     });
 
-    // 3. 🚀 动态计算坐标轴范围 (包含最小值)
-    const min_X = xValuesRaw.length > 0 ? Math.min(...xValuesRaw) : 0;
-    const max_X = xValuesRaw.length > 0 ? Math.max(...xValuesRaw) : 80;
-    const max_Y = yValuesRaw.length > 0 ? Math.max(...yValuesRaw) : 18;
-    
-    // X 轴最小值: 略微留白，向下取整到最近的 5 的倍数
-    const dynamicMinX = Math.floor(Math.max(0, min_X * 0.95) / 5) * 5; 
-    
-    // X, Y 轴最大值 (确保容纳 avgScoreLine 并向上取整)
-    const neededMaxX = Math.max(max_X, avgScoreLine * 1.05); 
-    const dynamicMaxX = Math.ceil(neededMaxX * 1.05 / 5) * 5; 
-    const dynamicMaxY = Math.ceil(max_Y * 1.10 / 5) * 5; 
+    // 3. 🚀 [!!] (修改) 动态计算坐标轴范围 (Z-Score)
+    // Z-Scores 是围绕 0 对称的
+    const min_X = xValuesRaw.length > 0 ? Math.min(...xValuesRaw) : -2;
+    const max_X = xValuesRaw.length > 0 ? Math.max(...xValuesRaw) : 2;
+    const max_Y = yValuesRaw.length > 0 ? Math.max(...yValuesRaw) : 1.5;
+
+    // X 轴动态范围, 至少 -2 到 2
+    const dynamicMinX = Math.floor(Math.min(-0.5, min_X * 1.1) / 0.5) * 0.5;
+    const dynamicMaxX = Math.ceil(Math.max(0.5, max_X * 1.1) / 0.5) * 0.5;
+    // Y 轴动态范围
+    const dynamicMaxY = Math.ceil(Math.max(0.5, max_Y * 1.1) / 0.5) * 0.5;
 
     // 4. 定义颜色和文本 (保持不变)
-    const quadrantColors = { 
+    const quadrantColors = {
         '右上': '#dc3545', '左上': '#ffc107', '右下': '#28a745', '左下': '#17a2b8'
     };
     const quadrantLabels = {
-        '右上': '尖子生但有短板\n(重点关注)', '左上': '基础差且有\n极大短板', 
+        '右上': '尖子生但有短板\n(重点关注)', '左上': '基础差且有\n极大短板',
         '右下': '学霸/全能型', '左下': '基础薄弱但\n各科均衡'
     };
-    
+
     // 5. 初始 Option (不包含 graphic)
     const initialOption = {
-        title: { text: '学生能力-均衡度 四象限图', left: 'center', textStyle: { fontSize: 16, fontWeight: 'normal' } },
+        title: { text: '学生能力-均衡度 四象限图 (Z-Score)', left: 'center', textStyle: { fontSize: 16, fontWeight: 'normal' } },
         tooltip: {
             trigger: 'item',
             formatter: (params) => {
                 if (params.componentType === 'graphic') return '';
                 const data = params.data;
+                // [!!] (修改) 更新 Tooltip
                 return `<strong>${data[2]}</strong><br/>` +
-                    `平均得分率 (能力): ${data[0].toFixed(2)}%<br/>` +
-                    `偏科标准差 (均衡): ${data[1].toFixed(2)}%`;
+                    `综合能力 (Z-Score均值): ${data[0].toFixed(2)}<br/>` +
+                    `偏科程度 (Z-Score标准差): ${data[1].toFixed(2)}`;
             }
         },
         grid: { left: '10%', right: '10%', bottom: '10%', top: '10%' },
-        xAxis: { 
-            type: 'value', 
-            name: '综合能力 (平均得分率 %)', 
-            nameLocation: 'middle', 
-            nameGap: 30, 
-            min: dynamicMinX, // 🚀 应用动态最小值
-            max: dynamicMaxX 
+        xAxis: {
+            type: 'value',
+            // [!!] (修改) 更新 X 轴
+            name: '综合能力 (平均Z-Score)',
+            nameLocation: 'middle',
+            nameGap: 30,
+            min: dynamicMinX,
+            max: dynamicMaxX
         },
-        yAxis: { type: 'value', name: '偏科程度 (标准差)', nameLocation: 'middle', nameGap: 40, min: 0, max: dynamicMaxY },
-        
+        // [!!] (修改) 更新 Y 轴
+        yAxis: { type: 'value', name: '偏科程度 (Z-Score标准差)', nameLocation: 'middle', nameGap: 40, min: 0, max: dynamicMaxY },
+
         series: [
             // 四个散点图系列 (保持不变)
             { name: '右上象限', type: 'scatter', data: quadrantData['右上'], symbolSize: 8, itemStyle: { opacity: 0.7, color: quadrantColors['右上'] } },
             { name: '左上象限', type: 'scatter', data: quadrantData['左上'], symbolSize: 8, itemStyle: { opacity: 0.7, color: quadrantColors['左上'] } },
             { name: '右下象限', type: 'scatter', data: quadrantData['右下'], symbolSize: 8, itemStyle: { opacity: 0.7, color: quadrantColors['右下'] } },
             { name: '左下象限', type: 'scatter', data: quadrantData['左下'], symbolSize: 8, itemStyle: { opacity: 0.7, color: quadrantColors['左下'] } },
-            
-            // 辅助 MarkLine 系列 (保持不变)
+
+            // [!!] (修改) 更新辅助 MarkLine
             {
-                name: '辅助线', type: 'scatter', data: [], 
+                name: '辅助线', type: 'scatter', data: [],
                 markLine: {
                     silent: true, animation: false, symbol: 'none',
-                    lineStyle: { type: 'dashed', color: 'red' }, 
+                    lineStyle: { type: 'dashed', color: 'red' },
                     data: [
-                        { xAxis: avgScoreLine, name: '平均能力线', label: { formatter: '平均能力' } },
+                        { xAxis: avgZScoreLine, name: '年级平均线', label: { formatter: '年级平均(0)' } },
                         { yAxis: avgStdDev, name: '平均偏科线', label: { formatter: '平均偏科' } }
                     ]
                 }
             }
         ]
     };
-    
+
     // 6. 第一次渲染：不包含 graphic 组件
     myChart.setOption(initialOption);
 
     // 7. 延迟 graphic 渲染
     setTimeout(() => {
-        
+
         const graphicElements = [];
-        // 🚀 使用修正后的 dynamicMinX/Max 来定位
+        // [!!] (修改) 使用 Z-Score 均值线
         const quadrantPositions = {
-            '右上': [avgScoreLine + (dynamicMaxX - avgScoreLine) * 0.5, avgStdDev + (dynamicMaxY - avgStdDev) * 0.5],
-            '左上': [dynamicMinX + (avgScoreLine - dynamicMinX) * 0.5, avgStdDev + (dynamicMaxY - avgStdDev) * 0.5], // 修正左侧定位
-            '右下': [avgScoreLine + (dynamicMaxX - avgScoreLine) * 0.5, avgStdDev * 0.5],
-            '左下': [dynamicMinX + (avgScoreLine - dynamicMinX) * 0.5, avgStdDev * 0.5] // 修正左侧定位
+            '右上': [avgZScoreLine + (dynamicMaxX - avgZScoreLine) * 0.5, avgStdDev + (dynamicMaxY - avgStdDev) * 0.5],
+            '左上': [dynamicMinX + (avgZScoreLine - dynamicMinX) * 0.5, avgStdDev + (dynamicMaxY - avgStdDev) * 0.5],
+            '右下': [avgZScoreLine + (dynamicMaxX - avgZScoreLine) * 0.5, avgStdDev * 0.5],
+            '左下': [dynamicMinX + (avgZScoreLine - dynamicMinX) * 0.5, avgStdDev * 0.5]
         };
 
         for (const key in quadrantPositions) {
             const [xCoord, yCoord] = quadrantPositions[key];
-            
+
             // 确保坐标在 grid 范围内
-            if (xCoord > dynamicMaxX || yCoord > dynamicMaxY || xCoord < dynamicMinX || yCoord < 0) continue; 
-            
+            if (xCoord > dynamicMaxX || yCoord > dynamicMaxY || xCoord < dynamicMinX || yCoord < 0) continue;
+
             const [pixelX, pixelY] = myChart.convertToPixel('grid', [xCoord, yCoord]);
 
             graphicElements.push({
@@ -3064,7 +3976,7 @@ function renderWeaknessScatter(elementId, weaknessData) {
 
         myChart.setOption({ graphic: graphicElements });
 
-    }, 0); 
+    }, 0);
 }
 
 /**
@@ -3074,107 +3986,460 @@ function renderWeaknessTable(elementId, weaknessData) {
     const tableContainer = document.getElementById(elementId);
     if (!tableContainer) return;
 
-    // 1. (核心) 创建一个 "短板" 的扁平列表
-    const flatList = [];
-    weaknessData.forEach(data => {
-        data.subjectDeviations.forEach(sub => {
-            // [!!] 我们只关心 "偏离度" 小于 -10% 的严重短板
-            if (sub.deviation < -10) {
-                flatList.push({
-                    name: data.student.name,
-                    id: data.student.id,
-                    subject: sub.subject,
-                    subjectPercent: sub.percent,
-                    avgPercent: data.avgPercent,
-                    deviation: sub.deviation
-                });
-            }
-        });
+    // 1. [!!] (重构) 创建 "学生最弱项" 列表
+    // (不再使用 flatList, 而是每个学生一行)
+    const studentWeaknessList = weaknessData.map(data => {
+        if (!data.subjectDeviations || data.subjectDeviations.length === 0) {
+            return { // (处理没有有效数据的学生)
+                name: data.student.name,
+                id: data.student.id,
+                avgZScore: data.avgZScore,
+                weakestSubject: 'N/A',
+                weakestDeviation: 0,
+                weakestZScore: 'N/A'
+            };
+        }
+
+        // 找到偏离度最小的科目
+        const weakest = data.subjectDeviations.reduce((minSub, currentSub) => {
+            return currentSub.deviation < minSub.deviation ? currentSub : minSub;
+        }, data.subjectDeviations[0]);
+
+        return {
+            name: data.student.name,
+            id: data.student.id,
+            avgZScore: data.avgZScore,
+            weakestSubject: weakest.subject,
+            weakestDeviation: weakest.deviation,
+            weakestZScore: weakest.zScore
+        };
     });
 
-    // 2. 按“偏离度”升序排序 (最弱的在最前面)
-    flatList.sort((a, b) => a.deviation - b.deviation);
+    // 2. 默认排序：按“最弱项偏离度”升序 (最弱的在最前面)
+    studentWeaknessList.sort((a, b) => a.weakestDeviation - b.weakestDeviation);
 
-    // 3. 渲染 HTML
-    let html = ``;
-    if (flatList.length === 0) {
-        html = `<p style="text-align: center; padding: 20px; color: var(--text-muted);">未发现严重偏科的学生 (偏离度 < -10%)。</p>`;
-    } else {
-        html = `
+    // 3. (新增) 渲染表格的内部函数 (用于搜索)
+    const drawTable = () => {
+        const searchTerm = document.getElementById('weakness-search').value.toLowerCase();
+
+        const filteredList = studentWeaknessList.filter(item => {
+            return String(item.name).toLowerCase().includes(searchTerm) ||
+                String(item.id).toLowerCase().includes(searchTerm);
+        });
+
+        let html = ``;
+        if (filteredList.length === 0) {
+            html = `<p style="text-align: center; padding: 20px; color: var(--text-muted);">未找到匹配的学生。</p>`;
+        } else {
+            html = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>学生姓名</th>
+                            <th>考号</th>
+                            <th>最弱科目</th>
+                            <th>最弱项偏离度</th>
+                            <th>最弱项Z-Score</th>
+                            <th>学生平均Z-Score</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${filteredList.map(item => `
+                            <tr data-id="${item.id}" style="cursor: pointer;">
+                                <td><strong>${item.name}</strong></td>
+                                <td>${item.id}</td>
+                                <td><strong>${item.weakestSubject}</strong></td>
+                                <td><strong class="${item.weakestDeviation < -0.5 ? 'regress' : ''}">${item.weakestDeviation.toFixed(2)}</strong></td>
+                                <td>${item.weakestZScore.toFixed ? item.weakestZScore.toFixed(2) : 'N/A'}</td>
+                                <td>${item.avgZScore.toFixed(2)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+        tableContainer.innerHTML = html;
+    };
+
+    // 4. (新增) 绑定搜索框事件
+    // (搜索框是在 renderWeakness 中创建的)
+    const searchInput = document.getElementById('weakness-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', drawTable);
+    }
+
+    // 5. 初始绘制
+    drawTable();
+}
+
+/**
+ * (新增) 10.19. 渲染单个学生的详细偏科表
+ * (在 renderWeaknessTable 之后调用)
+ */
+function renderWeaknessDetail(containerElement, studentData) {
+    const student = studentData.student;
+    const deviations = [...studentData.subjectDeviations]; // 复制数组
+
+    // 按偏离度升序排序 (最弱的在最前面)
+    deviations.sort((a, b) => a.deviation - b.deviation);
+
+    let html = `
+        <h4>${student.name} (${student.id}) - 各科偏离度详情</h4>
+        <div class="table-container" style="max-height: 400px; overflow-y: auto;">
             <table>
                 <thead>
                     <tr>
-                        <th>学生姓名</th>
-                        <th>弱势科目</th>
-                        <th>偏离度 (该科-均分)</th>
-                        <th>该科得分率</th>
-                        <th>学生平均得分率</th>
+                        <th>科目</th>
+                        <th>该科Z-Score</th>
+                        <th>学生平均Z-Score</th>
+                        <th>偏离度 (该科Z - 均Z)</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${flatList.map(item => `
+                    ${deviations.map(item => `
                         <tr>
-                            <td><strong>${item.name}</strong> (${item.id})</td>
                             <td><strong>${item.subject}</strong></td>
-                            <td><strong class="regress">${item.deviation}%</strong></td>
-                            <td>${item.subjectPercent}%</td>
-                            <td>${item.avgPercent}%</td>
+                            <td>${item.zScore.toFixed(2)}</td>
+                            <td>${studentData.avgZScore.toFixed(2)}</td>
+                            <td>
+                                <strong class="${item.deviation < -0.5 ? 'regress' : (item.deviation > 0.5 ? 'progress' : '')}">
+                                    ${item.deviation.toFixed(2)}
+                                </strong>
+                            </td>
                         </tr>
                     `).join('')}
                 </tbody>
             </table>
-        `;
-    }
-    tableContainer.innerHTML = html;
+        </div>
+    `;
+    containerElement.innerHTML = html;
 }
 
-/**
- * (新增) 11. 启动时从 localStorage 加载数据
- */
-function loadDataFromStorage() {
-    // 1. 尝试读取已存储的数据
-    const storedData = localStorage.getItem('G_StudentsData');
-    const storedCompareData = localStorage.getItem('G_CompareData');
-    const storedConfigs = localStorage.getItem('G_SubjectConfigs');
 
-    // 2. 如果没有“本次成绩”，则什么也不做
-    if (!storedData) {
-        console.log("未找到本地存储的数据。");
+// ---------------------------------
+// (新增) 10.21. 渲染不及格科目数条形图
+// ---------------------------------
+function renderFailureCountChart(elementId, failureCounts) {
+    const chartDom = document.getElementById(elementId);
+    if (!chartDom) return;
+
+    if (echartsInstances[elementId]) {
+        echartsInstances[elementId].dispose();
+    }
+    echartsInstances[elementId] = echarts.init(chartDom);
+
+    const labels = Object.keys(failureCounts).sort((a, b) => a - b);
+    const data = labels.map(key => failureCounts[key]);
+
+    const option = {
+        title: {
+            text: '不及格科目数量分布',
+            subtext: 'X轴: 不及格(含缺考)的科目数, Y轴: 学生人数',
+            left: 'center',
+            textStyle: { fontSize: 16, fontWeight: 'normal' }
+        },
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: (params) => {
+                const p = params[0];
+                return `<strong>${p.name} 科</strong><br/>学生人数: <strong>${p.value}</strong>人`;
+            }
+        },
+        grid: { left: '10%', right: '5%', bottom: '15%' },
+        xAxis: {
+            type: 'category',
+            data: labels,
+            name: '不及格科目数'
+        },
+        yAxis: {
+            type: 'value',
+            name: '学生人数'
+        },
+        series: [{
+            name: '人数',
+            type: 'bar',
+            data: data,
+            barWidth: '60%',
+            label: {
+                show: true,
+                position: 'top'
+            },
+            itemStyle: {
+                color: (params) => {
+                    const failCount = parseInt(params.name);
+                    if (failCount === 0) return '#28a745'; // 全及格 (绿)
+                    if (failCount === 1) return '#007bff'; // 1科 (蓝)
+                    if (failCount <= 3) return '#ffc107'; // 2-3科 (黄)
+                    return '#dc3545'; // 4科及以上 (红)
+                }
+            }
+        }]
+    };
+    echartsInstances[elementId].setOption(option);
+}
+
+// ---------------------------------
+// (新增) 10.22. 渲染重叠直方图
+// ---------------------------------
+function renderOverlappingHistogram(elementId, currentScores, compareScores, subjectName) {
+    const chartDom = document.getElementById(elementId);
+    if (!chartDom) return;
+
+    if (echartsInstances[elementId]) {
+        echartsInstances[elementId].dispose();
+    }
+    echartsInstances[elementId] = echarts.init(chartDom);
+
+    const cleanCurrent = currentScores.filter(s => typeof s === 'number' && !isNaN(s));
+    const cleanCompare = compareScores.filter(s => typeof s === 'number' && !isNaN(s));
+
+    if (cleanCurrent.length === 0 && cleanCompare.length === 0) {
+        chartDom.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding-top: 50px;">无数据可供显示。</p>`;
         return;
     }
 
-    console.log("发现本地存储数据，正在加载...");
+    // 1. (核心) 确定统一的分箱
+    const allScores = [...cleanCurrent, ...cleanCompare];
+    const min = Math.min(...allScores);
+    const max = Math.max(...allScores);
 
-    // 3. 恢复数据到全局变量
-    G_StudentsData = JSON.parse(storedData);
+    // 动态计算 binSize
+    let fullScore = 150;
+    if (subjectName === 'totalScore') {
+        fullScore = G_DynamicSubjectList.reduce((sum, key) => sum + (G_SubjectConfigs[key]?.full || 0), 0);
+    } else {
+        fullScore = G_SubjectConfigs[subjectName]?.full || 150;
+    }
+    const binSize = Math.max(10, Math.round(fullScore / 15));
 
-    if (storedCompareData) {
-        G_CompareData = JSON.parse(storedCompareData);
+    const startBin = Math.floor(min / binSize) * binSize;
+    const endBinLimit = Math.ceil((max + 0.01) / binSize) * binSize;
+
+    const labels = [];
+    const binsCurrent = {};
+    const binsCompare = {};
+
+    for (let i = startBin; i < endBinLimit; i += binSize) {
+        const label = `${i}-${i + binSize}`;
+        labels.push(label);
+        binsCurrent[label] = 0;
+        binsCompare[label] = 0;
     }
 
-    // (重要) 恢复上次保存的“科目配置”
-    if (storedConfigs) {
-        G_SubjectConfigs = JSON.parse(storedConfigs);
-    }
+    // 2. 填充数据
+    const fillBins = (scores, bins) => {
+        scores.forEach(score => {
+            const binIndex = Math.floor((score - startBin) / binSize);
+            const label = labels[binIndex];
+            if (label) {
+                bins[label]++;
+            }
+        });
+    };
 
-    // 4. (关键) 运行所有启动程序，就像刚上传了文件一样
+    fillBins(cleanCurrent, binsCurrent);
+    fillBins(cleanCompare, binsCompare);
 
-    // (填充) 填充班级筛选
-    populateClassFilter(G_StudentsData);
+    const dataCurrent = labels.map(label => binsCurrent[label]);
+    const dataCompare = labels.map(label => binsCompare[label]);
 
-    // (解锁) 解锁 UI
-    welcomeScreen.style.display = 'none';
-    compareUploadLabel.classList.remove('disabled');
-    navLinks.forEach(l => l.classList.remove('disabled'));
-    classFilterContainer.style.display = 'block';
-    classFilterHr.style.display = 'block';
-
-    // (运行) 运行分析
-    runAnalysisAndRender();
-
-    console.log("数据加载并分析完毕！");
+    const option = {
+        title: {
+            text: `${subjectName} 成绩分布对比`,
+            left: 'center',
+            textStyle: { fontSize: 16, fontWeight: 'normal' }
+        },
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' }
+        },
+        legend: {
+            data: ['本次成绩', '对比成绩'],
+            top: 30
+        },
+        grid: { left: '3%', right: '4%', bottom: '20%', containLabel: true },
+        xAxis: {
+            type: 'category',
+            data: labels,
+            name: '分数段',
+            axisLabel: {
+                interval: 'auto',
+                rotate: labels.length > 10 ? 30 : 0
+            }
+        },
+        yAxis: { type: 'value', name: '学生人数' },
+        series: [
+            {
+                name: '对比成绩',
+                type: 'bar',
+                data: dataCompare,
+                itemStyle: {
+                    color: 'rgba(108, 117, 125, 0.5)' // 灰色
+                }
+            },
+            {
+                name: '本次成绩',
+                type: 'bar',
+                data: dataCurrent,
+                itemStyle: {
+                    color: 'rgba(0, 123, 255, 0.7)' // 蓝色
+                }
+            }
+        ]
+    };
+    echartsInstances[elementId].setOption(option);
 }
 
+
+// ---------------------------------
+// (新增) 10.23. 渲染排名流动桑基图
+// ---------------------------------
+function renderRankingSankey(elementId, mergedData, totalStudents) {
+    const chartDom = document.getElementById(elementId);
+    if (!chartDom) return;
+
+    if (echartsInstances[elementId]) {
+        echartsInstances[elementId].dispose();
+    }
+    echartsInstances[elementId] = echarts.init(chartDom);
+
+    if (mergedData.length === 0) {
+        chartDom.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding-top: 50px;">无匹配的学生数据。</p>`;
+        return;
+    }
+
+    // 1. 定义分层
+    // (我们动态地按百分比分层)
+    const total = totalStudents;
+    const rankTiers = [
+        { name: 'Top 10%', min: 1, max: Math.ceil(total * 0.1) },
+        { name: '10%-30%', min: Math.ceil(total * 0.1) + 1, max: Math.ceil(total * 0.3) },
+        { name: '30%-60%', min: Math.ceil(total * 0.3) + 1, max: Math.ceil(total * 0.6) },
+        { name: 'Bottom 40%', min: Math.ceil(total * 0.6) + 1, max: total }
+    ];
+
+    // (辅助函数)
+    const getRankCategory = (rank) => {
+        for (const tier of rankTiers) {
+            if (rank >= tier.min && rank <= tier.max) {
+                return tier.name;
+            }
+        }
+        return 'N/A';
+    };
+
+    // 2. ECharts Nodes
+    const nodes = [];
+    rankTiers.forEach(tier => nodes.push({ name: `上次: ${tier.name}` }));
+    rankTiers.forEach(tier => nodes.push({ name: `本次: ${tier.name}` }));
+
+    // 3. ECharts Links
+    const linksMap = {};
+
+    mergedData.forEach(student => {
+        const oldRank = student.oldRank;
+        const newRank = student.rank;
+
+        if (oldRank > 0 && newRank > 0) { // (必须两次排名都有效)
+            const source = `上次: ${getRankCategory(oldRank)}`;
+            const target = `本次: ${getRankCategory(newRank)}`;
+            const key = `${source} -> ${target}`;
+
+            linksMap[key] = (linksMap[key] || 0) + 1;
+        }
+    });
+
+    const links = Object.keys(linksMap).map(key => {
+        const [source, target] = key.split(' -> ');
+        return {
+            source: source,
+            target: target,
+            value: linksMap[key]
+        };
+    });
+
+    const option = {
+        title: {
+            text: '总分排名分层流动图',
+            subtext: '基于两次考试均参加的学生',
+            left: 'center'
+        },
+        tooltip: {
+            trigger: 'item',
+            triggerOn: 'mousemove',
+            formatter: (params) => {
+                if (params.dataType === 'link') {
+                    return `${params.data.source} → ${params.data.target}: ${params.data.value} 人`;
+                }
+                if (params.dataType === 'node') {
+                    return `${params.name}: ${params.value} 人`;
+                }
+                return '';
+            }
+        },
+        series: [{
+            type: 'sankey',
+            data: nodes,
+            links: links,
+            emphasis: {
+                focus: 'adjacency'
+            },
+            nodeAlign: 'justify', // 两端对齐
+            lineStyle: {
+                color: 'source', // 颜色跟随源节点
+                curveness: 0.5
+            },
+            label: {
+                fontSize: 10
+            }
+        }]
+    };
+    echartsInstances[elementId].setOption(option);
+}
+
+/**
+ * (新增) 10.24. 渲染临界生模块 - 单个学生科目详情
+ */
+function renderBoundaryStudentDetail(containerElement, student) {
+
+    // (从 G_DynamicSubjectList 构建科目数据)
+    const subjectData = G_DynamicSubjectList.map(subject => {
+        return {
+            name: subject,
+            score: student.scores[subject] || 'N/A',
+            classRank: (student.classRanks && student.classRanks[subject]) ? student.classRanks[subject] : 'N/A',
+            gradeRank: (student.gradeRanks && student.gradeRanks[subject]) ? student.gradeRanks[subject] : 'N/A'
+        };
+    });
+
+    let html = `
+        <h4>${student.name} (${student.id}) - 全科成绩详情</h4>
+        <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>科目</th>
+                        <th>得分</th>
+                        <th>班级科目排名</th>
+                        <th>年级科目排名</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${subjectData.map(item => `
+                        <tr>
+                            <td><strong>${item.name}</strong></td>
+                            <td>${item.score}</td>
+                            <td>${item.classRank}</td>
+                            <td>${item.gradeRank}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    containerElement.innerHTML = html;
+}
 
 /**
  * (新增) 10.12. 渲染分层筛选 - 班级构成饼图
@@ -3259,7 +4524,7 @@ function renderGroupRadarChart(elementId, filteredStudents, totalStats) {
     const groupStats = calculateAllStatistics(filteredStudents);
 
     // 2. 准备雷达图指示器 (max 设为 1, 因为我们用难度/得分率)
-    const indicators = SUBJECT_LIST.map(subject => {
+    const indicators = G_DynamicSubjectList.map(subject => {
         // (动态获取最大值, 0.8 左右是比较好的最大值)
         const max = Math.max(
             totalStats[subject]?.difficulty || 0,
@@ -3269,12 +4534,12 @@ function renderGroupRadarChart(elementId, filteredStudents, totalStats) {
     });
 
     // 3. (新增) 获取 "筛选群体" 的得分率 (即难度)
-    const groupData = SUBJECT_LIST.map(subject => {
+    const groupData = G_DynamicSubjectList.map(subject => {
         return groupStats[subject]?.difficulty || 0;
     });
 
     // 4. (新增) 获取 "全体平均" 的得分率 (即难度)
-    const totalData = SUBJECT_LIST.map(subject => {
+    const totalData = G_DynamicSubjectList.map(subject => {
         return totalStats[subject]?.difficulty || 0;
     });
 
@@ -3364,6 +4629,259 @@ function calculateCorrelation(xScores, yScores) {
     return correlationCoefficient;
 }
 
+/**
+ * (新增) 10.20. 渲染单科A/B/C/D等级构成饼图
+ */
+function renderSingleSubjectPie(elementId, subjectStats) {
+    const chartDom = document.getElementById(elementId);
+    if (!chartDom) return;
+
+    if (echartsInstances[elementId]) {
+        echartsInstances[elementId].dispose();
+    }
+    echartsInstances[elementId] = echarts.init(chartDom);
+
+    // [!!] 从 stats 中获取 A, B, C, D 的比率
+    // A = 优秀率
+    // B = 良好率
+    // C = C率 (及格但未良好)
+    // D = 不及格率
+    const pieData = [
+        { value: subjectStats.excellentRate || 0, name: 'A (优秀)' },
+        { value: subjectStats.goodRate || 0, name: 'B (良好)' },
+        { value: subjectStats.cRate || 0, name: 'C (及格)' },
+        { value: subjectStats.failRate || 0, name: 'D (不及格)' }
+    ];
+
+    const option = {
+        title: {
+            text: '等级构成',
+            left: 'center',
+            textStyle: { fontSize: 16, fontWeight: 'normal' }
+        },
+        tooltip: {
+            trigger: 'item',
+            formatter: '{b}: {c}%'
+        },
+        legend: {
+            orient: 'vertical',
+            left: 'left',
+            top: 'middle'
+        },
+        series: [{
+            name: '等级',
+            type: 'pie',
+            radius: ['40%', '70%'], // (空心圆)
+            center: ['65%', '55%'], // (饼图靠右, 为图例腾空间)
+            data: pieData,
+            emphasis: {
+                itemStyle: {
+                    shadowBlur: 10,
+                    shadowOffsetX: 0,
+                    shadowColor: 'rgba(0, 0, 0, 0.5)'
+                }
+            },
+            label: {
+                show: true,
+                formatter: '{d}%', // (在饼图上显示百分比)
+                position: 'inside',
+                color: '#fff'
+            },
+            // [!!] (新增) 颜色映射
+            color: [
+                '#28a745', // A (绿)
+                '#007bff', // B (蓝)
+                '#ffc107', // C (黄)
+                '#dc3545'  // D (红)
+            ]
+        }]
+    };
+    echartsInstances[elementId].setOption(option);
+}
+
+// ---------------------------------
+// (新增) 10.21. 渲染不及格科目数条形图
+// ---------------------------------
+// [!!] (修改) 接收 failureData (对象) 而不是 failureCounts (数字)
+function renderFailureCountChart(elementId, failureData) {
+    const chartDom = document.getElementById(elementId);
+    if (!chartDom) return;
+
+    if (echartsInstances[elementId]) {
+        echartsInstances[elementId].dispose();
+    }
+    echartsInstances[elementId] = echarts.init(chartDom);
+
+    // [!!] (修改) 从 failureData 计算 labels 和 data
+    const labels = Object.keys(failureData).sort((a, b) => a - b); // ['0', '1', '2']
+    const data = labels.map(key => {
+        const students = failureData[key] || [];
+        return {
+            value: students.length, // [!!] (修改) value 是数组长度
+            names: students.map(s => s.name) // [!!] (新增) 存储姓名用于 tooltip
+        };
+    });
+    const categoryLabels = labels.map(l => `${l} 科`); // ['0 科', '1 科', '2 科']
+
+
+    const option = {
+        title: {
+            text: '不及格科目数量分布',
+            subtext: 'X轴: 不及格(含缺考)的科目数, Y轴: 学生人数',
+            left: 'center',
+            textStyle: { fontSize: 16, fontWeight: 'normal' }
+        },
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: (params) => {
+                // [!!] (修改) Tooltip 显示姓名
+                const p = params[0];
+                const names = p.data.names || [];
+                let namesHtml = names.slice(0, 10).join('<br/>');
+                if (names.length > 10) {
+                    namesHtml += `<br/>... (及另外 ${names.length - 10} 人)`;
+                }
+
+                return `<strong>${p.name}</strong><br/>` +
+                    `学生人数: <strong>${p.value}</strong>人` +
+                    `<hr style="margin: 5px 0; border-color: #eee;"/>` +
+                    `${namesHtml}`;
+            }
+        },
+        grid: { left: '10%', right: '5%', bottom: '15%' },
+        xAxis: {
+            type: 'category',
+            data: categoryLabels, // [!!] (修改)
+            name: '不及格科目数'
+        },
+        yAxis: {
+            type: 'value',
+            name: '学生人数'
+        },
+        series: [{
+            name: '人数',
+            type: 'bar',
+            data: data, // [!!] (修改)
+            barWidth: '60%',
+            label: {
+                show: true,
+                position: 'top'
+            },
+            itemStyle: {
+                color: (params) => {
+                    // [!!] (修改) 解析 '0 科'
+                    const failCount = parseInt(params.name.split(' ')[0]);
+                    if (failCount === 0) return '#28a745'; // 全及格 (绿)
+                    if (failCount === 1) return '#007bff'; // 1科 (蓝)
+                    if (failCount <= 3) return '#ffc107'; // 2-3科 (黄)
+                    return '#dc3545'; // 4科及以上 (红)
+                }
+            }
+        }]
+    };
+    echartsInstances[elementId].setOption(option);
+    return echartsInstances[elementId]; // [!!] (新增) 返回实例
+}
+
+// ---------------------------------
+// (新增) 10.23. 渲染排名流动桑基图
+// ---------------------------------
+// [!!] (修改) 传入分层逻辑, 并返回实例
+function renderRankingSankey(elementId, mergedData, rankTiers, getRankCategory, currentFilter) { // [!!] (修改) 接收 currentFilter
+    const chartDom = document.getElementById(elementId);
+    if (!chartDom) return null; // [!!] (修改)
+
+    if (echartsInstances[elementId]) {
+        echartsInstances[elementId].dispose();
+    }
+    echartsInstances[elementId] = echarts.init(chartDom);
+
+    if (mergedData.length === 0) {
+        chartDom.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding-top: 50px;">无匹配的学生数据。</p>`;
+        return null; // [!!] (修改)
+    }
+
+    // 1. [!!] (删除) 分层逻辑已移出
+    // const total = ...
+    // const rankTiers = ...
+    // const getRankCategory = ...
+
+    // 2. ECharts Nodes (不变)
+    const nodes = [];
+    rankTiers.forEach(tier => nodes.push({ name: `上次: ${tier.name}` }));
+    rankTiers.forEach(tier => nodes.push({ name: `本次: ${tier.name}` }));
+
+    // 3. ECharts Links (不变)
+    const linksMap = {};
+
+    mergedData.forEach(student => {
+        // [!!] (核心修复) 根据筛选器选择使用 年排 还是 班排
+        const useGradeRank = (currentFilter === 'ALL');
+
+        const oldRank = useGradeRank ? (student.oldGradeRank || 0) : student.oldRank;
+        const newRank = useGradeRank ? (student.gradeRank || 0) : student.rank;
+
+        if (oldRank > 0 && newRank > 0) { // (必须两次排名都有效)
+            const source = `上次: ${getRankCategory(oldRank)}`;
+            const target = `本次: ${getRankCategory(newRank)}`;
+            const key = `${source} -> ${target}`;
+
+            linksMap[key] = (linksMap[key] || 0) + 1;
+        }
+    });
+
+    const links = Object.keys(linksMap).map(key => {
+        const [source, target] = key.split(' -> ');
+        return {
+            source: source,
+            target: target,
+            value: linksMap[key]
+        };
+    });
+
+    const option = {
+        title: {
+            text: '总分排名分层流动图',
+            subtext: '基于两次考试均参加的学生',
+            left: 'center'
+        },
+        tooltip: {
+            trigger: 'item',
+            triggerOn: 'mousemove',
+            formatter: (params) => {
+                if (params.dataType === 'link') {
+                    return `${params.data.source} → ${params.data.target}: ${params.data.value} 人`;
+                }
+                if (params.dataType === 'node') {
+                    return `${params.name}: ${params.value} 人`;
+                }
+                return '';
+            }
+        },
+        series: [{
+            type: 'sankey',
+            data: nodes,
+            links: links,
+            emphasis: {
+                focus: 'adjacency'
+            },
+            nodeAlign: 'justify', // 两端对齐
+            lineStyle: {
+                color: 'source', // 颜色跟随源节点
+                curveness: 0.5
+            },
+            label: {
+                fontSize: 10,
+                position: 'inside', // [!!] (新增) 强制标签在节点内部显示
+                color: '#333'      // [!!] (新增) 确保标签在彩色背景上(如粉色/绿色)可读
+            }
+        }]
+    };
+    echartsInstances[elementId].setOption(option);
+    return echartsInstances[elementId]; // [!!] (新增) 返回实例
+}
+
 
 /**
  * (新增) 11.1. 计算所有班级的统计数据 (用于班级对比)
@@ -3399,4 +4917,71 @@ function calculateClassComparison(metric, subject) {
 
 
     return classData;
+}
+
+
+
+/**
+ * (新增) 11. 启动时从 localStorage 加载数据
+ */
+function loadDataFromStorage() {
+    // 1. 尝试读取已存储的数据
+    const storedData = localStorage.getItem('G_StudentsData');
+    const storedCompareData = localStorage.getItem('G_CompareData');
+    const storedConfigs = localStorage.getItem('G_SubjectConfigs');
+
+    // [!!] (新增) 尝试读取已存储的文件名
+    const storedMainFile = localStorage.getItem('G_MainFileName');
+    const storedCompareFile = localStorage.getItem('G_CompareFileName');
+
+    // 2. 如果没有“本次成绩”，则什么也不做
+    if (!storedData) {
+        console.log("未找到本地存储的数据。");
+        return;
+    }
+
+    console.log("发现本地存储数据，正在加载...");
+
+    // 3. 恢复数据到全局变量
+    G_StudentsData = JSON.parse(storedData);
+
+    if (storedCompareData) {
+        G_CompareData = JSON.parse(storedCompareData);
+    }
+
+    // (重要) 恢复上次保存的“科目配置”
+    if (storedConfigs) {
+        G_SubjectConfigs = JSON.parse(storedConfigs);
+    }
+
+    // 4. (关键) 运行所有启动程序，就像刚上传了文件一样
+
+    // (填充) 填充班级筛选
+    populateClassFilter(G_StudentsData);
+
+    // (解锁) 解锁 UI
+    welcomeScreen.style.display = 'none';
+    compareUploadLabel.classList.remove('disabled');
+    navLinks.forEach(l => l.classList.remove('disabled'));
+    classFilterContainer.style.display = 'block';
+    classFilterHr.style.display = 'block';
+
+    // 5. [!!] (新增) 恢复上传标签的提示文字
+    // (此时 DOM 元素 fileUploader 和 compareUploadLabel 均已加载)
+    if (storedMainFile) {
+        // fileUploader 是 <input>, 它的上一个兄弟元素 <label> 才是我们要改的
+        if (fileUploader && fileUploader.previousElementSibling) {
+            fileUploader.previousElementSibling.innerHTML = `✅ ${storedMainFile} (已加载)`;
+        }
+    }
+    if (storedCompareFile) {
+        if (compareUploadLabel) {
+            compareUploadLabel.innerHTML = `✅ ${storedCompareFile} (已加载)`;
+        }
+    }
+
+    // 6. (运行) 运行分析
+    runAnalysisAndRender();
+
+    console.log("数据加载并分析完毕！");
 }
