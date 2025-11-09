@@ -1494,6 +1494,7 @@ function renderTrend(container, currentData, compareData) {
                         <option value="name">按学生姓名 (默认)</option>
                         <option value="rankDiff_desc">按班排变化 (进步最多)</option>
                         <option value="rankDiff_asc">按班排变化 (退步最多)</option>
+                        <option value="gradeRankDiff_desc">按年排变化 (进步最多)</option>
                         <option value="gradeRankDiff_asc">按年排变化 (退步最多)</option>
                     </select>
                 </div>
