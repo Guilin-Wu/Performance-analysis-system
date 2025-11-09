@@ -1440,8 +1440,8 @@ function renderTrend(container, currentData, compareData) {
 
         const { key, direction } = G_TrendSort;
         filteredData.sort((a, b) => {
-            let valA = a[key];
-            let valB = b[key];
+            let valA = a[sortKey]; // [!!] (修复)
+            let valB = b[sortKey]; // [!!] (修复)
             valA = (valA === null || valA === undefined) ? (direction === 'asc' ? Infinity : -Infinity) : valA;
             valB = (valB === null || valB === undefined) ? (direction === 'asc' ? Infinity : -Infinity) : valB;
 
@@ -1494,7 +1494,6 @@ function renderTrend(container, currentData, compareData) {
                         <option value="name">按学生姓名 (默认)</option>
                         <option value="rankDiff_desc">按班排变化 (进步最多)</option>
                         <option value="rankDiff_asc">按班排变化 (退步最多)</option>
-                        <option value_desc="gradeRankDiff_desc">按年排变化 (进步最多)</option>
                         <option value="gradeRankDiff_asc">按年排变化 (退步最多)</option>
                     </select>
                 </div>
@@ -2168,35 +2167,35 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
     // 3. 匹配两个数据源 (包含 oldGradeRank)
     const mergedData = currentData.map(student => {
         const oldStudent = compareData.find(s => String(s.id) === String(student.id));
-        if (!oldStudent) return null; 
-        
+        if (!oldStudent) return null;
+
         return {
             ...student,
             oldTotalScore: oldStudent.totalScore,
             oldRank: oldStudent.rank,
-            oldGradeRank: oldStudent.gradeRank || 0 
+            oldGradeRank: oldStudent.gradeRank || 0
         };
-    }).filter(s => s !== null); 
+    }).filter(s => s !== null);
 
 
     // 4. 绑定直方图事件
     const subjectSelect = document.getElementById('dist-subject-select');
-    
+
     const drawHistogram = () => {
         const subject = subjectSelect.value;
-        const currentScores = (subject === 'totalScore') 
-            ? currentData.map(s => s.totalScore) 
+        const currentScores = (subject === 'totalScore')
+            ? currentData.map(s => s.totalScore)
             : currentData.map(s => s.scores[subject]);
-            
+
         const compareScores = (subject === 'totalScore')
             ? compareData.map(s => s.totalScore)
             : compareData.map(s => s.scores[subject]);
-            
+
         renderOverlappingHistogram('dist-overlap-histogram-chart', currentScores, compareScores, subject);
     };
 
     subjectSelect.addEventListener('change', drawHistogram);
-    
+
     // 5. 将分层逻辑移到此处，以便共享
     const total = currentData.length;
     const rankTiers = [
@@ -2218,7 +2217,7 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
 
     // 6. 初始绘制
     drawHistogram();
-    
+
     // 7. [!!] (修复) 确保
     // (A) 变量定义
     // (B) 查找元素
@@ -2241,7 +2240,7 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
             let tableHtml = '';
 
             const { dataType, data } = params;
-            
+
             // (核心修复) 检查当前是否为年段模式
             const useGradeRank = (currentFilter === 'ALL');
 
@@ -2258,7 +2257,7 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
                     // (修复) 动态选择排名
                     const oldRank = useGradeRank ? (s.oldGradeRank || 0) : s.oldRank;
                     const newRank = useGradeRank ? (s.gradeRank || 0) : s.rank;
-                    
+
                     return oldRank > 0 && newRank > 0 &&
                         getRankCategory(oldRank) === sourceTierName &&
                         getRankCategory(newRank) === targetTierName;
@@ -2295,19 +2294,19 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
 
             } else if (dataType === 'node') {
                 // --- 2. 点击了 "节点" ---
-                title = `${params.name} (${params.value}人)`; 
-                
+                title = `${params.name} (${params.value}人)`;
+
                 const nodeName = data.name.replace('上次: ', '').replace('本次: ', '');
                 const isOld = data.name.startsWith('上次:');
-                
+
                 students = mergedData.filter(s => {
                     // (核心修复) 动态选择排名
-                    const rank = isOld 
+                    const rank = isOld
                         ? (useGradeRank ? (s.oldGradeRank || 0) : s.oldRank)
                         : (useGradeRank ? (s.gradeRank || 0) : s.rank);
                     return rank > 0 && getRankCategory(rank) === nodeName;
                 });
-                
+
                 // (修复) 动态表头
                 const newRankHeader = useGradeRank ? '本次年排' : '本次班排';
                 const oldRankHeader = useGradeRank ? '上次年排' : '上次班排';
@@ -2318,23 +2317,23 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
                     </thead>
                     <tbody>
                         ${students.map(s => {
-                            // (修复) 动态选择排名
-                            const oldRank = useGradeRank ? (s.oldGradeRank || 0) : s.oldRank;
-                            const newRank = useGradeRank ? (s.gradeRank || 0) : s.rank;
+                    // (修复) 动态选择排名
+                    const oldRank = useGradeRank ? (s.oldGradeRank || 0) : s.oldRank;
+                    const newRank = useGradeRank ? (s.gradeRank || 0) : s.rank;
 
-                            const oldTierName = oldRank > 0 ? getRankCategory(oldRank) : 'N/A';
-                            const newTierName = newRank > 0 ? getRankCategory(newRank) : nodeName;
-                            
-                            const oldIndex = getTierIndex(oldTierName);
-                            const newIndex = getTierIndex(newTierName);
-                            let rowClass = '';
-                            if (oldIndex > newIndex && oldIndex !== -1 && newIndex !== -1) {
-                                rowClass = 'progress'; 
-                            } else if (oldIndex < newIndex && oldIndex !== -1 && newIndex !== -1) {
-                                rowClass = 'regress'; 
-                            }
+                    const oldTierName = oldRank > 0 ? getRankCategory(oldRank) : 'N/A';
+                    const newTierName = newRank > 0 ? getRankCategory(newRank) : nodeName;
 
-                            return `
+                    const oldIndex = getTierIndex(oldTierName);
+                    const newIndex = getTierIndex(newTierName);
+                    let rowClass = '';
+                    if (oldIndex > newIndex && oldIndex !== -1 && newIndex !== -1) {
+                        rowClass = 'progress';
+                    } else if (oldIndex < newIndex && oldIndex !== -1 && newIndex !== -1) {
+                        rowClass = 'regress';
+                    }
+
+                    return `
                             <tr class="${rowClass}">
                                 <td>${s.name}</td>
                                 <td>${s.class}</td>
@@ -2343,7 +2342,7 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
                                 <td>${oldTierName}</td>
                             </tr>
                             `;
-                        }).join('')}
+                }).join('')}
                     </tbody>
                 `;
             }
@@ -2486,8 +2485,8 @@ function renderCorrelationHeatmap(elementId, activeData) {
             type: 'heatmap',
             data: heatmapData,
             label: {
-                show: true, 
-                formatter: (params) => params.data[2] 
+                show: true,
+                formatter: (params) => params.data[2]
             },
             emphasis: {
                 itemStyle: {
