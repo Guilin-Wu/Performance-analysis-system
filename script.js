@@ -60,6 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const importModalFromStorageBtn = document.getElementById('import-modal-from-storage');
     const importMainBtn = document.getElementById('import-main-btn'); // (新按钮)
     const importCompareBtn = document.getElementById('import-compare-btn'); // (新按钮)
+    const clearAllBtn = document.getElementById('clear-all-data-btn'); // [!!] (新增)
 
     // 初始化 UI
     initializeUI();
@@ -154,6 +155,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
         runAnalysisAndRender();
         importModal.style.display = 'none';
+    });
+
+    // [!!] (新增) 监听“清除所有数据”按钮
+
+    clearAllBtn.addEventListener('click', () => {
+        if (confirm("您确定要清除所有已导入的“本次成绩”和“对比成绩”吗？\n\n(此操作不会清除“模块十二”中保存的数据)")) {
+            // 1. 清除 localStorage
+            localStorage.removeItem('G_StudentsData');
+            localStorage.removeItem('G_CompareData');
+            localStorage.removeItem('G_MainFileName');
+            localStorage.removeItem('G_CompareFileName');
+            localStorage.removeItem('G_SubjectConfigs');
+
+            // 2. 刷新页面
+            location.reload();
+        }
     });
 
 
@@ -288,9 +305,12 @@ async function handleFileData(event, type) {
 
 /**
  * 6.1 读取 Excel/CSV 文件 (智能解析器 - 动态识别表头行和科目)
+ * [!!] (重构) 
+ * - 1. 表头定位器不再强制要求 "得分"，只查找 "姓名" 和 "班级"。
+ * - 2. 列映射器现在支持 "一级表头" (例如, "语文" 列直接代表分数)。
  *
  * @param {File} file - 用户上传的Excel或CSV文件对象。
- * @returns {Promise<Array<Object>>} - 解析后的学生数据数组。
+ * @returns {Promise<Object>} - 包含 { processedData, dynamicSubjectList } 的对象。
  */
 function loadExcelData(file) {
     return new Promise((resolve, reject) => {
@@ -303,127 +323,117 @@ function loadExcelData(file) {
                 const sheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[sheetName];
 
-                // header: 1 返回数组的数组，defval: "" 将空单元格转为空字符串
                 const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
 
-                if (rawData.length < 3) {
-                    return reject(new Error("文件数据不完整，至少需要2行表头和1行数据。"));
+                if (rawData.length < 2) { // (修改) 至少需要1行表头和1行数据
+                    return reject(new Error("文件数据不完整，至少需要1行表头和1行数据。"));
                 }
 
-                // --- 🚀 智能定位表头行 ---
-                let metricRowIndex = -1;
-                // 定义寻找指标行的关键字段
-                const REQUIRED_METRICS = ["自定义考号", "姓名", "得分", "班次"];
+                // --- 🚀 智能定位表头行 (重构) ---
+                let keyRowIndex = -1;
+                // [!!] (修改) 我们只依赖 "姓名" 和 "班级"
+                const REQUIRED_METRICS = ["姓名", "班级"];
 
-                // 遍历原始数据的前几行（最多前5行），寻找指标行
-                for (let i = 1; i < Math.min(rawData.length, 5); i++) {
-                    // 清理当前行数据，便于精确匹配
+                // 遍历原始数据的前几行（最多前5行）
+                for (let i = 0; i < Math.min(rawData.length, 5); i++) {
                     const row = rawData[i].map(String).map(s => s.trim());
-
-                    // 如果这一行包含至少两个关键指标，我们认定它是指标行
                     const foundCount = REQUIRED_METRICS.filter(metric => row.includes(metric)).length;
 
-                    // 要求找到 '得分' 且找到至少一个定位字段 ('自定义考号', '姓名', '班次')
-                    if (foundCount >= 2 && row.includes("得分")) {
-                        metricRowIndex = i;
+                    // [!!] (修改) 只要 "姓名" 和 "班级" 都在，就认定是关键行
+                    if (foundCount === 2) {
+                        keyRowIndex = i;
                         break;
                     }
                 }
 
-                if (metricRowIndex === -1) {
-                    return reject(new Error("无法自动识别指标行。请确保表头包含 '自定义考号', '姓名', '得分', '班次'等关键字段。"));
+                if (keyRowIndex === -1) {
+                    // [!!] (修改) 更新错误提示
+                    return reject(new Error("无法自动识别指标行。请确保表头包含 '姓名' 和 '班级' 字段。"));
                 }
 
-                // 确定科目行（指标行的上一行）和数据开始行
-                const subjectRowIndex = metricRowIndex - 1;
-                const studentDataStartRow = metricRowIndex + 1;
+                // 确定科目行（关键行的上一行）和数据开始行
+                const subjectRowIndex = keyRowIndex - 1;
+                const studentDataStartRow = keyRowIndex + 1;
 
                 // 科目行：可能存在（两级表头）或不存在（一级表头或大标题）
                 const subjectHeader = (subjectRowIndex >= 0) ?
                     rawData[subjectRowIndex].map(String).map(s => s.trim()) :
                     [];
-                // 指标行
-                const metricHeader = rawData[metricRowIndex].map(String).map(s => s.trim());
+                // 关键行
+                const keyHeader = rawData[keyRowIndex].map(String).map(s => s.trim());
                 // --- 🚀 智能定位表头行 END ---
 
 
                 const colMap = {};
-                let currentSubject = "";
-                const headerLength = metricHeader.length;
+                let currentSubject = ""; // (用于两级表头)
+                const headerLength = keyHeader.length;
                 const dynamicSubjectList = [];
 
-                // 2. 核心：动态构建列映射 (colMap)
+                // [!!] (重构) 2. 核心：动态构建列映射 (colMap)
                 for (let i = 0; i < headerLength; i++) {
                     const subject = String(subjectHeader[i] || "").trim(); // 科目行
-                    const metric = metricHeader[i]; // 指标行
+                    const key = keyHeader[i]; // 关键行
 
-                    // --- 🚀 修正点：同时在 subjectHeader 和 metricHeader 中寻找基础字段 ---
+                    // A. 识别固定字段 (基于 关键行 key)
+                    if (key === "自定义考号") { colMap[i] = "id"; continue; }
+                    if (key === "姓名") { colMap[i] = "name"; continue; }
+                    if (key === "班级") { colMap[i] = "class"; continue; }
+                    if (key === "班次") { colMap[i] = "rank"; continue; }
+                    if (key === "校次") { colMap[i] = "gradeRank"; continue; }
 
-                    // A. 识别固定字段并重置 currentSubject (强化隔离)
-                    // 只要 subject 或 metric 中有一个匹配，就认为是基础信息列
-                    const isID = subject === "自定义考号" || metric === "自定义考号";
-                    const isName = subject === "姓名" || metric === "姓名";
-                    const isClass = subject === "班级" || metric === "班级";
-
-                    if (isID) {
-                        colMap[i] = "id";
-                        currentSubject = "";
-                        continue;
-                    } else if (isName) {
-                        colMap[i] = "name";
-                        currentSubject = "";
-                        continue;
-                    } else if (isClass) {
-                        // 注意：这里我们只用 '班级' 作为 key，即使它在 metricHeader 行是空的，
-                        // 只要 subjectHeader[i] 是 '班级' 就能被识别。
-                        colMap[i] = "class";
-                        currentSubject = "";
-                        continue;
-                    }
-
-                    // B. 追踪科目名（保持不变）
-                    // 只有当 subjectHeader[i] 有值时，才更新 currentSubject。
+                    // B. 追踪科目名 (基于 科目行 subject)
                     if (subject !== "") {
                         currentSubject = subject;
                     }
 
-                    // C. 识别总分字段
-                    if (currentSubject === "总分") {
-                        if (metric === "得分") colMap[i] = "totalScore";
-                        if (metric === "班次") colMap[i] = "rank";
-                        if (metric === "校次") colMap[i] = "gradeRank";
+                    // C. 识别总分
+                    // (Case 1: 两级表头 - subject="总分", key="得分")
+                    if (currentSubject === "总分" && key === "得分") {
+                        colMap[i] = "totalScore";
+                    }
+                    // (Case 2: 一级表头 - key="总分")
+                    else if (key === "总分") {
+                        colMap[i] = "totalScore";
                     }
 
-                    // D. 识别各科得分字段
-                    else if (metric === "得分" && currentSubject !== "") {
-                        const isBasicField = ["总分", "自定义考号", "姓名", "班级"].includes(currentSubject);
-
-                        if (!isBasicField) {
-                            colMap[i] = `scores.${currentSubject}`;
-
-                            if (!dynamicSubjectList.includes(currentSubject)) {
-                                dynamicSubjectList.push(currentSubject);
-                            }
+                    // D. 识别各科得分
+                    // (Case 1: 两级表头 - subject="语文", key="得分")
+                    else if (key === "得分" && currentSubject !== "" && currentSubject !== "总分") {
+                        colMap[i] = `scores.${currentSubject}`;
+                        if (!dynamicSubjectList.includes(currentSubject)) {
+                            dynamicSubjectList.push(currentSubject);
+                        }
+                    }
+                    // (Case 2: 一级表头 - key="语文")
+                    // (我们排除所有已知的非科目关键字)
+                    else if (key !== "" &&
+                             !["自定义考号", "姓名", "班级", "班次", "校次", "得分", "准考证号", "学生属性"].includes(key) && // [!!] (修改) 在这里添加 "准考证号"
+                             !key.includes("总分")) {
+                        // (此时 subjectHeader 可能是空的, key 是 "语文")
+                        const subjectName = key;
+                        colMap[i] = `scores.${subjectName}`;
+                        if (!dynamicSubjectList.includes(subjectName)) {
+                            dynamicSubjectList.push(subjectName);
                         }
                     }
                 }
 
                 // 3. 校验关键字段
-                const requiredKeys = ["id", "name", "class", "totalScore", "rank"];
+                // [!!] (修改) 只要求 "name" 和 "class"
+                const requiredKeys = ["name", "class"];
                 const foundKeys = Object.values(colMap);
                 const missingKeys = requiredKeys.filter(key => !foundKeys.includes(key));
 
                 if (missingKeys.length > 0) {
-                    console.warn("解析器映射 (缺失键): ", missingKeys);
-                    return reject(new Error(`无法自动解析表头。文件缺少关键字段: ${missingKeys.join(', ')}。请确保表头包含 '自定义考号', '姓名', '班级', '总分'列下的'得分'和'班次'。`));
+                    // [!!] (修改) 更新错误提示
+                    return reject(new Error(`无法自动解析表头。文件缺少关键字段: ${missingKeys.join(', ')}。请确保表头包含 '姓名' 和 '班级'。`));
                 }
 
                 // 4. 处理数据行
-                const studentRows = rawData.slice(studentDataStartRow); // 从定位到的数据开始行切片
+                const studentRows = rawData.slice(studentDataStartRow);
                 const processedData = [];
 
                 for (const row of studentRows) {
-                    // 跳过空白行
                     if (!String(row[Object.keys(colMap)[0]] || "").trim() && !String(row[Object.keys(colMap)[1]] || "").trim()) continue;
 
                     const student = { scores: {} };
@@ -432,25 +442,43 @@ function loadExcelData(file) {
                         const key = colMap[colIndex];
                         const rawValue = row[colIndex];
 
-                        // 数值转换和清洗
                         if (key.startsWith("scores.")) {
-                            const subject = key.split('.')[1];
+                            const subjectName = key.split('.')[1];
                             const cleanScore = parseFloat(rawValue);
-                            student.scores[subject] = isNaN(cleanScore) ? null : cleanScore;
+                            student.scores[subjectName] = isNaN(cleanScore) ? null : cleanScore;
                         } else if (key === "totalScore") {
                             const cleanTotal = parseFloat(rawValue);
                             student.totalScore = isNaN(cleanTotal) ? null : cleanTotal;
                         } else if (key === "rank" || key === "gradeRank") {
-                            // 排名转换为整数 (如果不是数字，设为 0)
                             const cleanRank = parseInt(rawValue);
-                            student[key] = isNaN(cleanRank) ? 0 : cleanRank;
+                            // [!!] (修改) 缺失的排名设为 null, 以便触发自动计算
+                            student[key] = isNaN(cleanRank) ? null : cleanRank;
                         } else {
-                            // 考号、姓名、班级等字段
                             student[key] = String(rawValue || "").trim();
                         }
                     }
 
-                    if (student.id) { // 仅添加有考号的有效行
+// [!!] (修改) 自动计算总分 (始终覆盖)
+                // if (student.totalScore === undefined || student.totalScore === null) { // <-- 删除这一行
+                    let calculatedTotal = 0;
+                    let hasValidScores = false;
+
+                    for (const subject of dynamicSubjectList) {
+                        const score = student.scores[subject];
+                        if (typeof score === 'number' && !isNaN(score)) {
+                            calculatedTotal += score;
+                            hasValidScores = true;
+                        }
+                    }
+                    student.totalScore = hasValidScores ? parseFloat(calculatedTotal.toFixed(2)) : null;
+                // } // <-- 删除这一行
+
+                    // [!!] (新增) ID回退
+                    if (!student.id && student.name) {
+                        student.id = student.name;
+                    }
+
+                    if (student.id) {
                         processedData.push(student);
                     }
                 }
@@ -459,12 +487,10 @@ function loadExcelData(file) {
                     return reject(new Error("文件解析成功，但没有找到有效的学生数据行。"));
                 }
 
-                // [!!] 核心修改：同时返回解析到的数据和动态科目列表
                 resolve({ processedData: processedData, dynamicSubjectList: dynamicSubjectList });
 
             } catch (err) {
                 console.error(err);
-                // 确保即使内部解析错误，也能返回友好的提示
                 reject(new Error("文件解析失败: ".concat(err.message || "未知错误。")));
             }
         };
@@ -481,6 +507,31 @@ function loadExcelData(file) {
 function addSubjectRanksToData(studentsData) {
     const dataWithRanks = [...studentsData];
     const classes = [...new Set(dataWithRanks.map(s => s.class))]; // [!!] (新增) 获取所有班级
+
+    // 1. 检查是否需要计算 年级总分排名 (gradeRank)
+    // (如果第一个学生没有年排(是null或0), 假设所有学生都没有)
+    if (!dataWithRanks[0].gradeRank) {
+        // 按总分排序 (高到低)
+        dataWithRanks.sort((a, b) => (b.totalScore || -Infinity) - (a.totalScore || -Infinity));
+        // 赋予年级排名
+        dataWithRanks.forEach((student, index) => {
+            student.gradeRank = index + 1;
+        });
+    }
+
+    // 2. 检查是否需要计算 班级总分排名 (rank)
+    if (!dataWithRanks[0].rank) {
+        classes.forEach(className => {
+            // 筛选该班学生
+            const classStudents = dataWithRanks.filter(s => s.class === className);
+            // 按总分排序 (高到低)
+            classStudents.sort((a, b) => (b.totalScore || -Infinity) - (a.totalScore || -Infinity));
+            // 赋予班级排名
+            classStudents.forEach((student, index) => {
+                student.rank = index + 1;
+            });
+        });
+    }
 
     G_DynamicSubjectList.forEach(subjectName => {
 
@@ -2462,7 +2513,7 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
 
 /**
  * (新增) 9.11. 模块十二：多次考试分析
- * [!!] (完整修复版)
+ * [!!] (重构) 新增“导入/导出 JSON 备份”功能
  * @param {Object} container - HTML 容器
  */
 function renderMultiExam(container) {
@@ -2479,17 +2530,30 @@ function renderMultiExam(container) {
 
             <ol id="multi-exam-list" class="multi-exam-list-container"></ol>
 
-            <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 15px 0 0 0; border-top: 1px solid var(--border-color); flex-wrap: wrap;">
-                <label for="multi-file-uploader" class="upload-label" style="padding: 8px 16px; background-color: var(--primary-color); color: white;">
-                    📊 添加新成绩 (可多选)
-                </label>
-                <input type="file" id="multi-file-uploader" accept=".xlsx, .xls, .csv" style="display: none;" multiple>
-                <span id="multi-file-status" style="margin-left: 15px; color: var(--text-muted);"></span>
+            <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 15px 0 0 0; border-top: 1px solid var(--border-color); flex-wrap: wrap; justify-content: space-between;">
 
-                <button id="multi-clear-all" class="sidebar-button" style="background-color: var(--color-red); margin-left: auto;">
-                    🗑️ 清除全部
-                </button>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <label for="multi-file-uploader" class="upload-label" style="padding: 10px 16px; background-color: var(--primary-color); color: white;">
+                        📊 添加新成绩 (可多选)
+                    </label>
+                    <input type="file" id="multi-file-uploader" accept=".xlsx, .xls, .csv" style="display: none;" multiple>
+
+                    <label for="multi-json-uploader" class="upload-label" style="padding: 10px 16px; background-color: var(--color-orange); color: white;">
+                        📥 导入备份 (JSON)
+                    </label>
+                    <input type="file" id="multi-json-uploader" accept=".json" style="display: none;">
+                </div>
+
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button id="multi-export-all" class="sidebar-button" style="background-color: var(--color-green);">
+                        📤 导出备份 (JSON)
+                    </button>
+                    <button id="multi-clear-all" class="sidebar-button" style="background-color: var(--color-red);">
+                        🗑️ 清除全部
+                    </button>
+                </div>
             </div>
+            <span id="multi-file-status" style="margin-top: 10px; color: var(--text-muted); display: block;"></span>
         </div>
 
         <div class="main-card-wrapper" style="margin-bottom: 20px;">
@@ -2505,27 +2569,23 @@ function renderMultiExam(container) {
         <div id="multi-student-report" style="display: none;">
             <div class="main-card-wrapper" style="margin-bottom: 20px;">
                 <h4 id="multi-student-name-title">学生报表</h4>
-
-                <div class="main-card-wrapper" style="padding: 15px; margin-top: 10px; box-shadow: var(--shadow-sm);">
-                    <h5>各科成绩曲线 (图1) - 科目筛选</h5>
-                    <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 0; flex-wrap: wrap; gap: 10px;">
-                        <button id="multi-subject-all" class="sidebar-button" style="padding: 5px 10px; font-size: 0.8em;">全选</button>
-                        <button id="multi-subject-none" class="sidebar-button" style="padding: 5px 10px; font-size: 0.8em; background-color: var(--color-gray);">全不选</button>
-                    </div>
-                    <div id="multi-subject-checkboxes" class="multi-subject-filter-container">
+                <div id="multi-subject-filter-container">
+                    <div class="main-card-wrapper" style="padding: 15px; margin-top: 10px; box-shadow: var(--shadow-sm);">
+                        <h5>各科成绩曲线 (图1) - 科目筛选</h5>
+                        <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 0; flex-wrap: wrap; gap: 10px;">
+                            <button id="multi-subject-all" class="sidebar-button" style="padding: 5px 10px; font-size: 0.8em;">全选</button>
+                            <button id="multi-subject-none" class="sidebar-button" style="padding: 5px 10px; font-size: 0.8em; background-color: var(--color-gray);">全不选</button>
                         </div>
+                        <div id="multi-subject-checkboxes" class="multi-subject-filter-container">
+                        </div>
+                    </div>
                 </div>
-        <div class="dashboard-chart-grid-1x1" style="margin-top: 20px;">
-            <div class="main-card-wrapper" style="margin-bottom: 20px;">
-                <h4 id="multi-student-name-title">学生报表</h4>
-                <div class="dashboard-chart-grid-1x1">
+                <div class="dashboard-chart-grid-1x1" style="margin-top: 20px;">
                     <div class="chart-container" id="multi-exam-score-chart" style="height: 400px;"></div>
                     <div class="chart-container" id="multi-exam-rank-chart" style="height: 400px;"></div>
                 </div>
-
                 <div id="multi-student-table-container" class="multi-exam-table-container">
-                    </div>
-
+                </div>
             </div>
         </div>
     `;
@@ -2536,7 +2596,12 @@ function renderMultiExam(container) {
     const listContainer = document.getElementById('multi-exam-list');
     const clearBtn = document.getElementById('multi-clear-all');
 
-    // (上传事件)
+    // [!!] (新增) 绑定导入/导出按钮
+    const exportBtn = document.getElementById('multi-export-all');
+    const jsonUploader = document.getElementById('multi-json-uploader');
+
+
+    // (上传事件 - 不变)
     multiUploader.addEventListener('change', async (event) => {
         const files = event.target.files;
         if (!files || files.length === 0) return;
@@ -2550,17 +2615,17 @@ function renderMultiExam(container) {
                 const rankedData = addSubjectRanksToData(processedData);
 
                 loadedData.push({
-                    id: Date.now() + Math.random(), // (唯一ID)
+                    id: Date.now() + Math.random(),
                     originalName: file.name,
-                    label: file.name.replace(/\.xlsx|\.xls|\.csv/g, ''), // (默认标签)
+                    label: file.name.replace(/\.xlsx|\.xls|\.csv/g, ''),
                     students: rankedData
                 });
             }
 
             statusLabel.innerText = `✅ 成功添加 ${files.length} 次考试。`;
-            saveMultiExamData(loadedData); // (保存回 LocalStorage)
-            renderMultiExamList(loadedData); // (重新渲染列表)
-            initializeStudentSearch(loadedData); // (重新初始化搜索)
+            saveMultiExamData(loadedData);
+            renderMultiExamList(loadedData);
+            initializeStudentSearch(loadedData);
 
         } catch (err) {
             statusLabel.innerText = `❌ 加载失败: ${err.message}`;
@@ -2568,7 +2633,7 @@ function renderMultiExam(container) {
         }
     });
 
-    // (列表交互事件 - 委托)
+    // (列表交互事件 - 不变)
     listContainer.addEventListener('input', (e) => {
         if (e.target && e.target.dataset.role === 'label') {
             const id = e.target.closest('li').dataset.id;
@@ -2578,14 +2643,13 @@ function renderMultiExam(container) {
             if (item) {
                 item.label = newLabel;
                 saveMultiExamData(data);
-                // (不需要重绘列表，但需要重绘学生图表)
                 initializeStudentSearch(data);
-                document.getElementById('multi-student-report').style.display = 'none'; // (隐藏旧图表)
+                document.getElementById('multi-student-report').style.display = 'none';
             }
         }
     });
-
     listContainer.addEventListener('click', (e) => {
+        // ... (此函数内部不变) ...
         if (!e.target) return;
         const button = e.target.closest('button');
         if (!button) return;
@@ -2608,10 +2672,10 @@ function renderMultiExam(container) {
         saveMultiExamData(data);
         renderMultiExamList(data);
         initializeStudentSearch(data);
-        document.getElementById('multi-student-report').style.display = 'none'; // (隐藏旧图表)
+        document.getElementById('multi-student-report').style.display = 'none';
     });
 
-    // (清空事件)
+    // (清空事件 - 不变)
     clearBtn.addEventListener('click', () => {
         if (confirm('您确定要清除所有已保存的“多次考试”数据吗？此操作不可撤销。')) {
             saveMultiExamData([]);
@@ -2621,7 +2685,77 @@ function renderMultiExam(container) {
         }
     });
 
-    // 3. (核心) 页面加载时, 立即加载数据并渲染
+    // [!!] (新增) 导出备份 (Export JSON)
+    exportBtn.addEventListener('click', () => {
+        const data = loadMultiExamData();
+        if (data.length === 0) {
+            alert('没有可导出的数据。');
+            return;
+        }
+        try {
+            const jsonString = JSON.stringify(data);
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `成绩分析系统_多次考试备份_${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            statusLabel.innerText = `✅ 成功导出 ${data.length} 条考试数据。`;
+        } catch (err) {
+            statusLabel.innerText = `❌ 导出失败: ${err.message}`;
+            console.error(err);
+        }
+    });
+
+    // [!!] (新增) 导入备份 (Import JSON)
+    jsonUploader.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        statusLabel.innerText = `🔄 正在读取备份文件...`;
+        const reader = new FileReader();
+
+        reader.onload = (e) => {
+            try {
+                const importedData = JSON.parse(e.target.result);
+
+                // (简单校验)
+                if (!Array.isArray(importedData) || (importedData.length > 0 && !importedData[0].students)) {
+                    throw new Error('文件格式不正确，不是有效的备份文件。');
+                }
+
+                if (confirm(`您确定要用此文件中的 ${importedData.length} 条数据，覆盖当前所有“多次考试”数据吗？`)) {
+                    saveMultiExamData(importedData);
+                    renderMultiExamList(importedData);
+                    initializeStudentSearch(importedData);
+                    document.getElementById('multi-student-report').style.display = 'none';
+                    statusLabel.innerText = `✅ 成功导入 ${importedData.length} 条考试数据。`;
+                } else {
+                    statusLabel.innerText = '导入操作已取消。';
+                }
+
+            } catch (err) {
+                statusLabel.innerText = `❌ 导入失败: ${err.message}`;
+                console.error(err);
+            } finally {
+                jsonUploader.value = null; // (清空 input，以便下次还能选择同名文件)
+            }
+        };
+
+        reader.onerror = () => {
+            statusLabel.innerText = '❌ 文件读取失败。';
+            jsonUploader.value = null;
+        };
+
+        reader.readAsText(file);
+    });
+
+    // 3. (核心) 页面加载时, 立即加载数据并渲染 (不变)
     const initialData = loadMultiExamData();
     renderMultiExamList(initialData);
     initializeStudentSearch(initialData);

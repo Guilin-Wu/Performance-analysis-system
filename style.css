@@ -97,7 +97,7 @@ h2, h3 {
     font-weight: 600;
 }
 .sidebar ul li a.disabled, .upload-label.disabled {
-    color: #aaa;
+    color: #9f3131;
     background-color: transparent;
     cursor: not-allowed;
 }
@@ -718,4 +718,23 @@ td span.regress {
     display: grid;
     grid-template-columns: 1fr; /* 1列 */
     gap: 20px;
+}
+/* --- (新增) 模块十二：导入/导出按钮样式 --- */
+.multi-exam-import-label {
+    padding: 8px 16px;
+    /* [!!] (修复) 与“导出”按钮的字体大小 (0.9em) 统一 */
+    font-size: 0.9em; 
+    /* [!!] (修复) 与“导出”按钮的颜色 (绿色) 统一 */
+    background-color: var(--color-orange); 
+    color: rgb(235, 16, 16); 
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: background-color 0.2s;
+    display: flex; 
+    align-items: center; 
+    gap: 5px; 
+}
+.multi-exam-import-label:hover {
+    /* [!!] (修改) 悬停时变为深绿色 */
+    background-color: #218838; 
 }
