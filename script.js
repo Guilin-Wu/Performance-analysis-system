@@ -233,7 +233,7 @@ async function handleFileData(event, type) {
     const file = event.target.files[0];
     if (!file) return;
 
-    const label = (type === 'main') ? fileUploader.previousElementSibling : compareUploadLabel;
+    const label = (type === 'main') ? fileUploader.previousElementSibling : document.getElementById('import-compare-btn');
     label.innerHTML = "🔄 正在解析...";
 
     try {
@@ -5315,6 +5315,7 @@ function renderMultiExamLineChart(elementId, title, examNames, seriesData, yAxis
 
 /**
  * (新增) 11. 启动时从 localStorage 加载数据
+ * [!!] (完整修复版)
  */
 function loadDataFromStorage() {
     // 1. 尝试读取已存储的数据
@@ -5322,10 +5323,9 @@ function loadDataFromStorage() {
     const storedCompareData = localStorage.getItem('G_CompareData');
     const storedConfigs = localStorage.getItem('G_SubjectConfigs');
 
-    // [!!] (新增) 尝试读取已存储的文件名
     const storedMainFile = localStorage.getItem('G_MainFileName');
     const storedCompareFile = localStorage.getItem('G_CompareFileName');
-
+    
     // 2. 如果没有“本次成绩”，则什么也不做
     if (!storedData) {
         console.log("未找到本地存储的数据。");
@@ -5341,44 +5341,43 @@ function loadDataFromStorage() {
         G_CompareData = JSON.parse(storedCompareData);
     }
 
-    // (重要) 恢复上次保存的“科目配置”
     if (storedConfigs) {
         G_SubjectConfigs = JSON.parse(storedConfigs);
     }
 
-    // 4. (关键) 运行所有启动程序，就像刚上传了文件一样
-
-    // (填充) 填充班级筛选
+    // 4. (关键) 运行所有启动程序
     populateClassFilter(G_StudentsData);
 
     // (解锁) 解锁 UI
     welcomeScreen.style.display = 'none';
-    document.getElementById('import-compare-btn').classList.remove('disabled');
+    
+    // [!!] (修复) 查找修复后的 'import-compare-btn'
+    const compareBtnEl = document.getElementById('import-compare-btn');
+    if (compareBtnEl) {
+        compareBtnEl.classList.remove('disabled');
+    }
+
     navLinks.forEach(l => l.classList.remove('disabled'));
     classFilterContainer.style.display = 'block';
     classFilterHr.style.display = 'block';
 
-    // 5. [!!] (新增) 恢复上传标签的提示文字
-    // (此时 DOM 元素 fileUploader 和 compareUploadLabel 均已加载)
+    // 5. 恢复上传标签的提示文字
     if (storedMainFile) {
-        // fileUploader 是 <input>, 它的上一个兄弟元素 <label> 才是我们要改的
-        // [!!] (修复) 应该使用 import-main-btn
         const mainBtn = document.getElementById('import-main-btn');
         if (mainBtn) {
             mainBtn.innerHTML = `✅ ${storedMainFile} (已加载)`;
         }
     }
     if (storedCompareFile) {
-        const compareBtn = document.getElementById('import-compare-btn');
-        if (compareBtn) {
-            compareBtn.innerHTML = `✅ ${storedCompareFile} (已加载)`;
+        // [!!] (修复) 'compareBtnEl' 变量已在上面定义
+        // (这就是 L237 错误发生的地方)
+        if (compareBtnEl) {
+            compareBtnEl.innerHTML = `✅ ${storedCompareFile} (已加载)`;
         }
     }
 
     // 6. (运行) 运行分析
     runAnalysisAndRender();
-
-    console.log("数据加载并分析完毕！");
 }
 
 /**

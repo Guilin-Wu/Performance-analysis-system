@@ -1,14 +1,16 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>学生成绩分析系统</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
-    <script src="xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts/dist/extension/dataTool.min.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
     <div class="app-container">
@@ -16,7 +18,7 @@
             <div class="sidebar-header">
                 <h2>成绩分析系统</h2>
             </div>
-            
+
             <ul>
                 <li class="config-section" id="class-filter-container" style="display: none;">
                     <h4>班级筛选</h4>
@@ -54,21 +56,21 @@
                     <input type="file" id="file-uploader" accept=".xlsx, .xls, .csv" style="display: none;">
                 </li>
                 <li>
-                    <label id="import-compare-btn" class="upload-label" id="compare-upload-label">
+                    <label id="import-compare-btn" class="upload-label">
                         📉 导入对比成绩
                     </label>
                     <input type="file" id="file-uploader-compare" accept=".xlsx, .xls, .csv" style="display: none;">
                 </li>
                 <li><a href="#" class="nav-link">✍️ 作者：G.L.Wu</a></li>
             </ul>
-            </nav>
+        </nav>
 
         <main class="main-content">
             <div id="welcome-screen">
                 <h2>欢迎使用成绩分析系统</h2>
                 <p>请点击左侧 "📊 导入本次成绩" 开始分析。</p>
             </div>
-            
+
             <div id="module-dashboard" class="module-panel"></div>
             <div id="module-student" class="module-panel"></div>
             <div id="module-paper" class="module-panel"></div>
@@ -99,12 +101,12 @@
                                 <th>科目</th>
                                 <th>满分 (Full)</th>
                                 <th>优秀线 (Excel)</th>
-                                <th>良好线 (Good)</th> 
+                                <th>良好线 (Good)</th>
                                 <th>及格线 (Pass)</th>
                             </tr>
                         </thead>
                         <tbody>
-                            </tbody>
+                        </tbody>
                     </table>
                 </div>
             </div>
@@ -130,7 +132,8 @@
                 <hr style="margin: 20px 0;">
                 <h4>2. 从本地文件导入</h4>
                 <p>像以前一样，从您的电脑上传一个新文件。</p>
-                <button id="import-modal-from-file" class="sidebar-button" style="width: 100%; background-color: var(--color-gray);">
+                <button id="import-modal-from-file" class="sidebar-button"
+                    style="width: 100%; background-color: var(--color-gray);">
                     从本地文件上传
                 </button>
             </div>
@@ -139,4 +142,5 @@
 
     <script src="script.js"></script>
 </body>
+
 </html>
