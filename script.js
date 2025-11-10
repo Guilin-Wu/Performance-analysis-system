@@ -13,12 +13,14 @@ let G_DynamicSubjectList = [...DEFAULT_SUBJECT_LIST];
 // 存储数据
 let G_StudentsData = []; // { id, name, class, totalScore, rank, gradeRank, scores: {...} }
 let G_CompareData = [];  // 同上, 用于对比
+//let G_MultiExamData = [];
 let G_Statistics = {};   // 存储当前 *已筛选* 后的统计数据
 let G_CompareStatistics = {};
 let G_TrendSort = { key: 'rank', direction: 'asc' }; // [!!] (新增) 趋势模块的排序状态
 
 // 存储UI状态
 let G_CurrentClassFilter = 'ALL';
+let G_CurrentImportType = 'main';
 let G_SubjectConfigs = {};
 
 // ---------------------------------
@@ -33,22 +35,31 @@ document.addEventListener('DOMContentLoaded', () => {
     // 绑定 DOM 元素
     fileUploader = document.getElementById('file-uploader');
     fileUploaderCompare = document.getElementById('file-uploader-compare');
-    compareUploadLabel = document.getElementById('compare-upload-label');
     navLinks = document.querySelectorAll('.nav-link');
     modulePanels = document.querySelectorAll('.module-panel');
     welcomeScreen = document.getElementById('welcome-screen');
 
-    // (新增) 班级筛选
+    // 班级筛选
     classFilterContainer = document.getElementById('class-filter-container');
     classFilterSelect = document.getElementById('class-filter');
     classFilterHr = document.getElementById('class-filter-hr');
 
-    // (新增) 科目配置
+    // 科目配置
     modal = document.getElementById('subject-config-modal');
     modalCloseBtn = document.getElementById('modal-close-btn');
     modalSaveBtn = document.getElementById('modal-save-btn');
     configSubjectsBtn = document.getElementById('config-subjects-btn');
     subjectConfigTableBody = document.getElementById('subject-config-table').getElementsByTagName('tbody')[0];
+
+    // [!!] (新增) 导入模态框 DOM
+    const importModal = document.getElementById('import-modal');
+    const importModalTitle = document.getElementById('import-modal-title');
+    const importModalCloseBtn = document.getElementById('import-modal-close-btn');
+    const importModalSelect = document.getElementById('import-modal-select');
+    const importModalFromFileBtn = document.getElementById('import-modal-from-file');
+    const importModalFromStorageBtn = document.getElementById('import-modal-from-storage');
+    const importMainBtn = document.getElementById('import-main-btn'); // (新按钮)
+    const importCompareBtn = document.getElementById('import-compare-btn'); // (新按钮)
 
     // 初始化 UI
     initializeUI();
@@ -59,15 +70,92 @@ document.addEventListener('DOMContentLoaded', () => {
     // 3. 事件监听器
     // ---------------------------------
 
-    // 监听文件上传 (本次成绩)
+    // 监听文件上传 (本次成绩) - [!!] (不变) 由模态框触发
     fileUploader.addEventListener('change', async (event) => {
         await handleFileData(event, 'main');
     });
 
-    // 监听文件上传 (对比成绩)
+    // 监听文件上传 (对比成绩) - [!!] (不变) 由模态框触发
     fileUploaderCompare.addEventListener('change', async (event) => {
         await handleFileData(event, 'compare');
     });
+
+    // [!!] (新增) 打开导入模态框 (主)
+    importMainBtn.addEventListener('click', () => {
+        G_CurrentImportType = 'main';
+        importModalTitle.innerText = '选择“本次成绩”数据源';
+        openImportModal();
+    });
+
+    // [!!] (新增) 打开导入模态框 (对比)
+    importCompareBtn.addEventListener('click', (e) => {
+        if (e.target.classList.contains('disabled')) return;
+        G_CurrentImportType = 'compare';
+        importModalTitle.innerText = '选择“对比成绩”数据源';
+        openImportModal();
+    });
+
+    // [!!] (新增) 导入模态框：关闭
+    importModalCloseBtn.addEventListener('click', () => {
+        importModal.style.display = 'none';
+    });
+
+    // [!!] (新增) 导入模态框：从文件
+    importModalFromFileBtn.addEventListener('click', () => {
+        if (G_CurrentImportType === 'main') {
+            fileUploader.click();
+        } else {
+            fileUploaderCompare.click();
+        }
+        importModal.style.display = 'none';
+    });
+
+    // [!!] (新增) 导入模态框：从存储
+    importModalFromStorageBtn.addEventListener('click', () => {
+        const selectedId = importModalSelect.value;
+        if (!selectedId) {
+            alert('请选择一个已存的成绩单！');
+            return;
+        }
+
+        const allData = loadMultiExamData();
+        const selectedExam = allData.find(e => String(e.id) === selectedId);
+        if (!selectedExam) {
+            alert('未找到所选数据，请刷新重试。');
+            return;
+        }
+
+        // (复用 handleFileData 的核心逻辑)
+        const labelText = `✅ ${selectedExam.label} (来自存储)`;
+
+        if (G_CurrentImportType === 'main') {
+            G_StudentsData = selectedExam.students;
+            localStorage.setItem('G_StudentsData', JSON.stringify(G_StudentsData));
+            localStorage.setItem('G_MainFileName', selectedExam.label);
+
+            populateClassFilter(G_StudentsData);
+            // 解锁 UI
+            welcomeScreen.style.display = 'none';
+            compareUploadLabel.classList.remove('disabled');
+            navLinks.forEach(l => l.classList.remove('disabled'));
+            classFilterContainer.style.display = 'block';
+            classFilterHr.style.display = 'block';
+
+            if (importMainBtn) importMainBtn.innerHTML = labelText;
+
+        } else { // 'compare'
+            G_CompareData = selectedExam.students;
+            localStorage.setItem('G_CompareData', JSON.stringify(G_CompareData));
+            localStorage.setItem('G_CompareFileName', selectedExam.label);
+
+            const compareBtn = document.getElementById('import-compare-btn');
+            if (compareBtn) compareBtn.innerHTML = labelText;
+        }
+
+        runAnalysisAndRender();
+        importModal.style.display = 'none';
+    });
+
 
     // 监听导航切换
     navLinks.forEach(link => {
@@ -79,41 +167,41 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const targetModule = link.getAttribute('data-module');
 
-            // 趋势模块特殊检查
-            if (targetModule === 'trend' && G_CompareData.length === 0) {
-                alert('请先导入 "对比成绩" 数据，才能使用趋势分析！');
+            // 检查对比数据
+            const compareRequiredModules = ['trend', 'trend-distribution'];
+            if (compareRequiredModules.includes(targetModule) && G_CompareData.length === 0) {
+                alert('请先导入 "对比成绩" 数据，才能使用此模块！');
                 return;
             }
 
             navLinks.forEach(l => l.classList.remove('active'));
             link.classList.add('active');
 
-            // (重构) 导航切换只负责渲染，不负责重新计算
             runAnalysisAndRender();
         });
     });
 
-    // (新增) 班级筛选
+    // 班级筛选
     classFilterSelect.addEventListener('change', () => {
         G_CurrentClassFilter = classFilterSelect.value;
-        runAnalysisAndRender(); // 筛选变化，重新分析并渲染
+        runAnalysisAndRender();
     });
 
-    // (新增) 科目配置模态窗
+    // 科目配置模态窗
     configSubjectsBtn.addEventListener('click', () => {
-        populateSubjectConfigModal(); // 打开时，用当前 G_SubjectConfigs 填充
+        populateSubjectConfigModal();
         modal.style.display = 'flex';
     });
     modalCloseBtn.addEventListener('click', () => {
         modal.style.display = 'none';
     });
     modalSaveBtn.addEventListener('click', () => {
-        saveSubjectConfigsFromModal(); // 保存配置到 G_SubjectConfigs
+        saveSubjectConfigsFromModal();
         modal.style.display = 'none';
-        runAnalysisAndRender(); // 配置变化，重新分析并渲染
+        runAnalysisAndRender();
     });
 
-    // (新增) 监听窗口大小变化，重绘 ECharts
+    // 监听窗口大小变化
     window.addEventListener('resize', () => {
         for (const key in echartsInstances) {
             if (echartsInstances[key]) {
@@ -128,7 +216,7 @@ document.addEventListener('DOMContentLoaded', () => {
  * 禁用所有操作，直到主文件被加载
  */
 function initializeUI() {
-    compareUploadLabel.classList.add('disabled');
+    document.getElementById('import-compare-btn').classList.add('disabled');
     navLinks.forEach(link => {
         if (!link.classList.contains('active')) {
             link.classList.add('disabled');
@@ -173,7 +261,7 @@ async function handleFileData(event, type) {
 
             // 解锁 UI
             welcomeScreen.style.display = 'none';
-            compareUploadLabel.classList.remove('disabled');
+            document.getElementById('import-compare-btn').classList.remove('disabled');
             navLinks.forEach(l => l.classList.remove('disabled'));
             classFilterContainer.style.display = 'block';
             classFilterHr.style.display = 'block';
@@ -606,7 +694,9 @@ function renderModule(moduleName, activeData, activeCompareData) {
         case 'trend-distribution':
             renderTrendDistribution(container, activeData, activeCompareData, G_Statistics, G_CompareStatistics, G_CurrentClassFilter); // [!!] (新增) 传入 G_CurrentClassFilter
             break;
-
+        case 'multi-exam':
+            renderMultiExam(container);
+            break;
         case 'trend':
             renderTrend(container, activeData, activeCompareData);
             break;
@@ -2371,6 +2461,159 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
 }
 
 /**
+ * (新增) 9.11. 模块十二：多次考试分析
+ * [!!] (完整修复版)
+ * @param {Object} container - HTML 容器
+ */
+function renderMultiExam(container) {
+
+    // 1. 渲染模块独有的HTML (包含独立的文件上传器)
+    container.innerHTML = `
+        <h2>模块十二：多次考试分析</h2>
+        <p style="margin-top: -20px; margin-bottom: 20px; color: var(--text-muted);">
+            在此模块上传的成绩将被浏览器永久保存（直到您手动清除）。
+        </p>
+
+        <div class="main-card-wrapper" style="margin-bottom: 20px;">
+            <h4>考试列表管理</h4>
+
+            <ol id="multi-exam-list" class="multi-exam-list-container"></ol>
+
+            <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 15px 0 0 0; border-top: 1px solid var(--border-color); flex-wrap: wrap;">
+                <label for="multi-file-uploader" class="upload-label" style="padding: 8px 16px; background-color: var(--primary-color); color: white;">
+                    📊 添加新成绩 (可多选)
+                </label>
+                <input type="file" id="multi-file-uploader" accept=".xlsx, .xls, .csv" style="display: none;" multiple>
+                <span id="multi-file-status" style="margin-left: 15px; color: var(--text-muted);"></span>
+
+                <button id="multi-clear-all" class="sidebar-button" style="background-color: var(--color-red); margin-left: auto;">
+                    🗑️ 清除全部
+                </button>
+            </div>
+        </div>
+
+        <div class="main-card-wrapper" style="margin-bottom: 20px;">
+            <div class="controls-bar">
+                <label for="multi-student-search">搜索学生 (姓名/考号):</label>
+                <div class="search-combobox">
+                    <input type="text" id="multi-student-search" placeholder="输入姓名或考号..." autocomplete="off">
+                    <div class="search-results" id="multi-student-search-results"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="multi-student-report" style="display: none;">
+            <div class="main-card-wrapper" style="margin-bottom: 20px;">
+                <h4 id="multi-student-name-title">学生报表</h4>
+                <div class="dashboard-chart-grid-2x2">
+                    <div class="chart-container" id="multi-exam-score-chart" style="height: 400px;"></div>
+                    <div class="chart-container" id="multi-exam-rank-chart" style="height: 400px;"></div>
+                </div>
+
+                <div id="multi-student-table-container" class="multi-exam-table-container">
+                    </div>
+
+            </div>
+        </div>
+    `;
+
+    // 2. 绑定 DOM 和事件
+    const multiUploader = document.getElementById('multi-file-uploader');
+    const statusLabel = document.getElementById('multi-file-status');
+    const listContainer = document.getElementById('multi-exam-list');
+    const clearBtn = document.getElementById('multi-clear-all');
+
+    // (上传事件)
+    multiUploader.addEventListener('change', async (event) => {
+        const files = event.target.files;
+        if (!files || files.length === 0) return;
+
+        statusLabel.innerText = `🔄 正在解析 ${files.length} 个文件...`;
+        let loadedData = loadMultiExamData(); // (获取现有数据)
+
+        try {
+            for (const file of files) {
+                const { processedData } = await loadExcelData(file); 
+                const rankedData = addSubjectRanksToData(processedData);
+
+                loadedData.push({
+                    id: Date.now() + Math.random(), // (唯一ID)
+                    originalName: file.name,
+                    label: file.name.replace(/\.xlsx|\.xls|\.csv/g, ''), // (默认标签)
+                    students: rankedData
+                });
+            }
+
+            statusLabel.innerText = `✅ 成功添加 ${files.length} 次考试。`;
+            saveMultiExamData(loadedData); // (保存回 LocalStorage)
+            renderMultiExamList(loadedData); // (重新渲染列表)
+            initializeStudentSearch(loadedData); // (重新初始化搜索)
+
+        } catch (err) {
+            statusLabel.innerText = `❌ 加载失败: ${err.message}`;
+            console.error(err);
+        }
+    });
+
+    // (列表交互事件 - 委托)
+    listContainer.addEventListener('input', (e) => {
+        if (e.target && e.target.dataset.role === 'label') {
+            const id = e.target.closest('li').dataset.id;
+            const newLabel = e.target.value;
+            let data = loadMultiExamData();
+            const item = data.find(d => String(d.id) === id);
+            if (item) {
+                item.label = newLabel;
+                saveMultiExamData(data);
+                // (不需要重绘列表，但需要重绘学生图表)
+                initializeStudentSearch(data);
+                document.getElementById('multi-student-report').style.display = 'none'; // (隐藏旧图表)
+            }
+        }
+    });
+
+    listContainer.addEventListener('click', (e) => {
+        if (!e.target) return;
+        const button = e.target.closest('button');
+        if (!button) return;
+
+        const role = button.dataset.role;
+        const id = button.closest('li').dataset.id;
+        let data = loadMultiExamData();
+        const index = data.findIndex(d => String(d.id) === id);
+
+        if (index === -1) return;
+
+        if (role === 'delete') {
+            data.splice(index, 1);
+        } else if (role === 'up' && index > 0) {
+            [data[index - 1], data[index]] = [data[index], data[index - 1]]; // (交换)
+        } else if (role === 'down' && index < data.length - 1) {
+            [data[index + 1], data[index]] = [data[index], data[index + 1]]; // (交换)
+        }
+
+        saveMultiExamData(data);
+        renderMultiExamList(data);
+        initializeStudentSearch(data);
+        document.getElementById('multi-student-report').style.display = 'none'; // (隐藏旧图表)
+    });
+
+    // (清空事件)
+    clearBtn.addEventListener('click', () => {
+        if (confirm('您确定要清除所有已保存的“多次考试”数据吗？此操作不可撤销。')) {
+            saveMultiExamData([]);
+            renderMultiExamList([]);
+            initializeStudentSearch([]);
+            document.getElementById('multi-student-report').style.display = 'none';
+        }
+    });
+
+    // 3. (核心) 页面加载时, 立即加载数据并渲染
+    const initialData = loadMultiExamData();
+    renderMultiExamList(initialData);
+    initializeStudentSearch(initialData);
+}
+/**
  * (新增) 10.15. 渲染学科关联热力图 (Heatmap)
  * [!!] (已修复)
  */
@@ -3016,7 +3259,7 @@ function renderSubjectBoxPlot(elementId, stats, activeData) {
                     formatter: function (param) {
                         // param.data 是 { name: '...', value: [...] }
                         return `<strong>${param.data.name}</strong><br/>` +
-                               `${labels[param.data.value[0]]}: <strong>${param.data.value[1]}</strong>分`;
+                            `${labels[param.data.value[0]]}: <strong>${param.data.value[1]}</strong>分`;
                     }
                 }
             }
@@ -4494,7 +4737,7 @@ function renderBoundaryStudentDetail(containerElement, student) {
             score: score || 'N/A',
             classRank: (student.classRanks && student.classRanks[subject]) ? student.classRanks[subject] : 'N/A',
             gradeRank: (student.gradeRanks && student.gradeRanks[subject]) ? student.gradeRanks[subject] : 'N/A',
-            scoreClass: scoreClass 
+            scoreClass: scoreClass
         };
     });
 
@@ -5004,7 +5247,71 @@ function calculateClassComparison(metric, subject) {
     return classData;
 }
 
+/**
+ * (新增) 10.25. (ECharts) 渲染多次考试曲线图 (通用)
+ */
+function renderMultiExamLineChart(elementId, title, examNames, seriesData, yAxisInverse) {
+    const chartDom = document.getElementById(elementId);
+    if (!chartDom) return;
 
+    if (echartsInstances[elementId]) {
+        echartsInstances[elementId].dispose();
+    }
+    echartsInstances[elementId] = echarts.init(chartDom);
+
+    const option = {
+        title: {
+            text: title,
+            left: 'center',
+            textStyle: { fontSize: 16, fontWeight: 'normal' }
+        },
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'cross' }
+        },
+        legend: {
+            top: 30,
+            type: 'scroll' // (如果科目太多)
+        },
+        grid: {
+            left: '10%',
+            right: '10%',
+            bottom: '15%',
+            top: 70
+        },
+        xAxis: {
+            type: 'category',
+            boundaryGap: false,
+            data: examNames,
+            axisLabel: {
+                rotate: 15,
+                interval: 0 // (强制显示所有X轴标签)
+            }
+        },
+        yAxis: {
+            type: 'value',
+            inverse: yAxisInverse, // [!!] (排名图需要反转)
+            axisPointer: {
+                snap: true
+            }
+        },
+        dataZoom: [ // (允许缩放)
+            {
+                type: 'inside',
+                xAxisIndex: [0]
+            },
+            {
+                type: 'slider',
+                xAxisIndex: [0],
+                bottom: 10,
+                height: 20
+            }
+        ],
+        series: seriesData
+    };
+
+    echartsInstances[elementId].setOption(option);
+}
 
 /**
  * (新增) 11. 启动时从 localStorage 加载数据
@@ -5046,7 +5353,7 @@ function loadDataFromStorage() {
 
     // (解锁) 解锁 UI
     welcomeScreen.style.display = 'none';
-    compareUploadLabel.classList.remove('disabled');
+    document.getElementById('import-compare-btn').classList.remove('disabled');
     navLinks.forEach(l => l.classList.remove('disabled'));
     classFilterContainer.style.display = 'block';
     classFilterHr.style.display = 'block';
@@ -5055,13 +5362,16 @@ function loadDataFromStorage() {
     // (此时 DOM 元素 fileUploader 和 compareUploadLabel 均已加载)
     if (storedMainFile) {
         // fileUploader 是 <input>, 它的上一个兄弟元素 <label> 才是我们要改的
-        if (fileUploader && fileUploader.previousElementSibling) {
-            fileUploader.previousElementSibling.innerHTML = `✅ ${storedMainFile} (已加载)`;
+        // [!!] (修复) 应该使用 import-main-btn
+        const mainBtn = document.getElementById('import-main-btn');
+        if (mainBtn) {
+            mainBtn.innerHTML = `✅ ${storedMainFile} (已加载)`;
         }
     }
     if (storedCompareFile) {
-        if (compareUploadLabel) {
-            compareUploadLabel.innerHTML = `✅ ${storedCompareFile} (已加载)`;
+        const compareBtn = document.getElementById('import-compare-btn');
+        if (compareBtn) {
+            compareBtn.innerHTML = `✅ ${storedCompareFile} (已加载)`;
         }
     }
 
@@ -5069,4 +5379,261 @@ function loadDataFromStorage() {
     runAnalysisAndRender();
 
     console.log("数据加载并分析完毕！");
+}
+
+/**
+ * (新增) 11.2. (重构) 渲染“多次考试”的UI列表
+ */
+function renderMultiExamList(multiExamData) {
+    const listContainer = document.getElementById('multi-exam-list');
+    if (!listContainer) return;
+
+    if (!multiExamData || multiExamData.length === 0) {
+        listContainer.innerHTML = `<li class="multi-exam-item-empty">暂无数据，请点击“添加新成绩”上传。</li>`;
+        return;
+    }
+
+    listContainer.innerHTML = multiExamData.map((item, index) => {
+        return `
+            <li class="multi-exam-item" data-id="${item.id}">
+                <span class="multi-exam-index">${index + 1}.</span>
+                <input type="text" value="${item.label}" data-role="label" class="multi-exam-label" title="点击可重命名: ${item.originalName}">
+                <div class="multi-exam-buttons">
+                    <button data-role="up" ${index === 0 ? 'disabled' : ''}>▲</button>
+                    <button data-role="down" ${index === multiExamData.length - 1 ? 'disabled' : ''}>▼</button>
+                    <button data-role="delete" class="delete-btn">×</button>
+                </div>
+            </li>
+        `;
+    }).join('');
+}
+
+/**
+ * (新增) 11.3. (重构) 保存“多次考试”数据到 LocalStorage
+ */
+function saveMultiExamData(data) {
+    localStorage.setItem('G_MultiExamData', JSON.stringify(data));
+}
+
+/**
+ * (新增) 11.4. (重构) 从 LocalStorage 加载“多次考试”数据
+ */
+function loadMultiExamData() {
+    const storedData = localStorage.getItem('G_MultiExamData');
+    return storedData ? JSON.parse(storedData) : [];
+}
+
+
+/**
+ * (重构) 11.5. 初始化“多次考试分析”的学生搜索框
+ */
+function initializeStudentSearch(multiExamData) {
+    const searchInput = document.getElementById('multi-student-search');
+    const resultsContainer = document.getElementById('multi-student-search-results');
+    const reportContainer = document.getElementById('multi-student-report');
+
+    if (!searchInput) return; // (如果不在当前模块, DOM不存在)
+
+    const allStudentsMap = new Map();
+    multiExamData.forEach(exam => {
+        exam.students.forEach(student => {
+            if (!allStudentsMap.has(student.id)) {
+                allStudentsMap.set(student.id, student.name);
+            }
+        });
+    });
+
+    const allStudentsList = Array.from(allStudentsMap, ([id, name]) => ({ id, name }));
+
+    searchInput.addEventListener('input', (e) => {
+        const searchTerm = e.target.value.toLowerCase();
+        if (searchTerm.length < 1) {
+            resultsContainer.innerHTML = '';
+            resultsContainer.style.display = 'none';
+            return;
+        }
+
+        const filteredStudents = allStudentsList.filter(s => {
+            return String(s.name).toLowerCase().includes(searchTerm) ||
+                String(s.id).toLowerCase().includes(searchTerm);
+        }).slice(0, 50);
+
+        if (filteredStudents.length === 0) {
+            resultsContainer.innerHTML = '<div class="result-item">-- 未找到 --</div>';
+        } else {
+            resultsContainer.innerHTML = filteredStudents.map(s => {
+                return `<div class="result-item" data-id="${s.id}">
+                    <strong>${s.name}</strong> (${s.id})
+                </div>`;
+            }).join('');
+        }
+        resultsContainer.style.display = 'block';
+    });
+
+    resultsContainer.addEventListener('click', (e) => {
+        const item = e.target.closest('.result-item');
+        if (item && item.dataset.id) {
+            const studentId = item.dataset.id;
+            const studentName = item.querySelector('strong').innerText;
+
+            searchInput.value = `${studentName} (${studentId})`;
+            resultsContainer.innerHTML = '';
+            resultsContainer.style.display = 'none';
+
+            document.getElementById('multi-student-name-title').innerText = `${studentName} 的成绩曲线`;
+            reportContainer.style.display = 'block';
+
+            // [!!] (修改) 调用新函数
+            drawMultiExamChartsAndTable(studentId, loadMultiExamData());
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        if (searchInput && !searchInput.contains(e.target) && resultsContainer && !resultsContainer.contains(e.target)) {
+            resultsContainer.style.display = 'none';
+        }
+    });
+}
+
+
+/**
+ * (重构) 11.6. (核心) 绘制多次考试的图表和表格
+ */
+function drawMultiExamChartsAndTable(studentId, multiExamData) {
+    // [!!] (重构) X轴标签来自用户定义的 label
+    const examNames = multiExamData.map(e => e.label);
+
+    const rankSeries = [];
+    const scoreSeries = [];
+
+    const rankData = {
+        classRank: [],
+        gradeRank: []
+    };
+    const subjectData = {};
+
+    // 1. (重构) 动态初始化科目列表 (基于所有考试的并集)
+    const allSubjects = new Set();
+    multiExamData.forEach(exam => {
+        exam.students.forEach(s => {
+            Object.keys(s.scores).forEach(subject => allSubjects.add(subject));
+        });
+    });
+
+    const dynamicSubjects = Array.from(allSubjects);
+    dynamicSubjects.forEach(subject => {
+        subjectData[subject] = [];
+    });
+
+    // 2. 遍历所有考试，填充数据
+    multiExamData.forEach(exam => {
+        const student = exam.students.find(s => String(s.id) === String(studentId));
+
+        if (student) {
+            // (填充科目分)
+            dynamicSubjects.forEach(subject => {
+                subjectData[subject].push(student.scores[subject] || null);
+            });
+            rankData.classRank.push(student.rank || null);
+            rankData.gradeRank.push(student.gradeRank || null);
+        } else {
+            // (该生本次考试缺考)
+            dynamicSubjects.forEach(subject => {
+                subjectData[subject].push(null);
+            });
+            rankData.classRank.push(null);
+            rankData.gradeRank.push(null);
+        }
+    });
+
+    // 3. 转换为 ECharts Series 格式 (用于图表)
+    dynamicSubjects.forEach(subject => {
+        scoreSeries.push({
+            name: subject,
+            type: 'line',
+            data: subjectData[subject],
+            smooth: true,
+            connectNulls: true
+        });
+    });
+
+    rankSeries.push({
+        name: '班级排名',
+        type: 'line',
+        data: rankData.classRank,
+        smooth: true,
+        connectNulls: true
+    });
+    rankSeries.push({
+        name: '年级排名',
+        type: 'line',
+        data: rankData.gradeRank,
+        smooth: true,
+        connectNulls: true
+    });
+
+    // 4. 绘图 (不变)
+    renderMultiExamLineChart('multi-exam-score-chart', '各科成绩曲线', examNames, scoreSeries, false);
+    renderMultiExamLineChart('multi-exam-rank-chart', '排名变化曲线', examNames, rankSeries, true);
+
+    // 5. [!!] (新增) 绘制详细数据表格
+    const tableContainer = document.getElementById('multi-student-table-container');
+    if (!tableContainer) return;
+
+    let tableHtml = `
+        <h4>成绩详情表</h4>
+        <div class="table-container" style="max-height: 400px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>考试名称</th>
+                        <th>班级排名</th>
+                        <th>年级排名</th>
+                        ${dynamicSubjects.map(s => `<th>${s}</th>`).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${examNames.map((examName, index) => `
+                        <tr>
+                            <td><strong>${examName}</strong></td>
+                            <td>${rankData.classRank[index] || 'N/A'}</td>
+                            <td>${rankData.gradeRank[index] || 'N/A'}</td>
+                            ${dynamicSubjects.map(subject => `
+                                <td>${subjectData[subject][index] || 'N/A'}</td>
+                            `).join('')}
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    tableContainer.innerHTML = tableHtml;
+}
+
+/**
+ * (新增) 11.7. 打开“导入来源”模态框
+ */
+function openImportModal() {
+    const importModal = document.getElementById('import-modal');
+    const importModalSelect = document.getElementById('import-modal-select');
+    const importModalFromStorageBtn = document.getElementById('import-modal-from-storage');
+
+    // 1. (复用) 加载“模块十二”的数据
+    const multiData = loadMultiExamData();
+
+    // 2. 填充下拉框
+    if (multiData.length > 0) {
+        importModalSelect.innerHTML = multiData.map(exam => {
+            return `<option value="${exam.id}">${exam.label} (原始: ${exam.originalName})</option>`;
+        }).join('');
+        importModalSelect.disabled = false;
+        importModalFromStorageBtn.disabled = false;
+    } else {
+        importModalSelect.innerHTML = '<option value="">“模块十二”中暂无数据</option>';
+        importModalSelect.disabled = true;
+        importModalFromStorageBtn.disabled = true;
+    }
+
+    // 3. 显示模态框
+    importModal.style.display = 'flex';
 }

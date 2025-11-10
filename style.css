@@ -605,3 +605,96 @@ td span.regress {
     width: 80px;
     flex-grow: 0; /* (新增) 不允许它们拉伸 */
 }
+
+/* --- (新增) 模块十二：多次考试分析 列表样式 --- */
+.multi-exam-list-container {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+}
+
+.multi-exam-item, .multi-exam-item-empty {
+    display: flex;
+    align-items: center;
+    padding: 10px 15px;
+    border-bottom: 1px solid var(--border-color);
+}
+.multi-exam-item:last-child {
+    border-bottom: none;
+}
+.multi-exam-item-empty {
+    color: var(--text-muted);
+    justify-content: center;
+}
+
+.multi-exam-index {
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-right: 10px;
+}
+
+/* [!!] 这就是您要找的 .multi-exam-label 
+  我已经加入了修复输入框过短的 'width: 0' 
+*/
+.multi-exam-label {
+    flex-grow: 1;
+    font-size: 1em;
+    padding: 4px 8px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+
+    /* [!!] (修复) 修复输入框太短的问题 */
+    width: 0; 
+    min-width: 100px;
+}
+.multi-exam-label:hover {
+    border-color: var(--border-color);
+}
+.multi-exam-label:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    background-color: #f8f9fa;
+}
+
+.multi-exam-buttons {
+    margin-left: auto;
+    display: flex;
+    gap: 5px;
+}
+.multi-exam-buttons button {
+    padding: 4px 8px;
+    font-size: 0.9em;
+    border: none;
+    background-color: #f0f0f0;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.multi-exam-buttons button:hover {
+    background-color: #e0e0e0;
+}
+.multi-exam-buttons button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+.multi-exam-buttons button.delete-btn {
+    background-color: #ffeaea;
+    color: var(--color-red);
+    font-weight: 600;
+}
+.multi-exam-buttons button.delete-btn:hover {
+    background-color: #f8c0c0;
+}
+
+/* --- (新增) 模块十二：表格样式 --- */
+.multi-exam-table-container {
+    margin-top: 20px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 20px;
+}
+.multi-exam-table-container h4 {
+    margin-top: 0;
+}
