@@ -15,6 +15,9 @@ let G_StudentsData = []; // { id, name, class, totalScore, rank, gradeRank, scor
 let G_CompareData = [];  // 同上, 用于对比
 //let G_MultiExamData = [];
 let G_Statistics = {};   // 存储当前 *已筛选* 后的统计数据
+let G_ItemAnalysisData = {};
+let G_ItemAnalysisConfig = {};
+let G_ItemOutlierList = [];
 let G_CompareStatistics = {};
 let G_TrendSort = { key: 'rank', direction: 'asc' }; // [!!] (新增) 趋势模块的排序状态
 
@@ -274,12 +277,13 @@ document.addEventListener('DOMContentLoaded', () => {
  * 4. UI 初始化
  * 禁用所有操作，直到主文件被加载
  */
+// [!! MODIFIED !!]
 function initializeUI() {
     document.getElementById('import-compare-btn').classList.add('disabled');
     navLinks.forEach(link => {
-        // [!!] (修改) 允许“多次考试分析”模块始终可用
+        // [!!] (修改) 允许“多次考试分析”和“小题分析”模块始终可用
         const module = link.getAttribute('data-module');
-        if (module === 'multi-exam') {
+        if (module === 'multi-exam' || module === 'item-analysis') { // [!! MODIFIED !!]
             link.classList.remove('disabled'); // 确保它绝不被禁用
         } else if (!link.classList.contains('active')) {
             link.classList.add('disabled');
@@ -733,16 +737,18 @@ function calculateStatsForScores(scores, fullMark, passLine, excellentLine, good
 function runAnalysisAndRender() {
     // 1. [!!] (修改) 先获取当前要渲染的模块
     const currentModuleLink = document.querySelector('.nav-link.active');
-    // (健壮性检查) 如果没有激活的链接，则退出
     if (!currentModuleLink) return;
     const currentModule = currentModuleLink.dataset.module;
 
-    // 2. [!!] (修改) 如果是“多次考试分析”，则特殊处理
+    // 2. [!!] (修改) 如果是“多次考试分析”或“小题分析”，则特殊处理
     if (currentModule === 'multi-exam') {
-        // 这个模块不依赖 G_StudentsData，直接渲染
-        // (renderModule 会自动找到正确的 container 并调用 renderMultiExam)
         renderModule(currentModule, [], []);
-        return; // [!!] (重要) 渲染后立即退出，跳过后续所有逻辑
+        return; 
+    }
+    // [!! NEW !!]
+    if (currentModule === 'item-analysis') {
+        renderModule(currentModule, [], []);
+        return;
     }
 
     // 3. [!!] (原第1行) 对所有其他模块，执行数据检查
@@ -828,6 +834,10 @@ function renderModule(moduleName, activeData, activeCompareData) {
         // [!!] (新增) 偏科诊断
         case 'weakness':
             renderWeakness(container, activeData, G_Statistics); // [!!] (新增) 传入 G_Statistics
+            break;
+            //小题分析
+        case 'item-analysis':
+            renderItemAnalysis(container);
             break;
         default:
             container.innerHTML = `<h2>模块 ${moduleName} (待开发)</h2>`;
@@ -5950,4 +5960,1631 @@ function openImportModal() {
 
     // 3. 显示模态框
     importModal.style.display = 'flex';
+}
+
+// =====================================================================
+// [!! NEW !!] 模块十三：学科小题分析
+// =====================================================================
+
+/**
+ * 13.1. 渲染模块十三 (学科小题分析) 的主界面
+ * * [!! 修正版 13 !!] - 2025-11-11
+ * - (Feature) 按照用户要求，重新调整了所有图表和表格的显示顺序。
+ */
+function renderItemAnalysis(container) {
+    if (container.dataset.initialized) {
+        return;
+    }
+    container.dataset.initialized = 'true';
+
+    // 1. 渲染基础HTML
+    container.innerHTML = `
+        <h2>模块十三：学科小题分析</h2>
+        <p style="margin-top: -20px; margin-bottom: 20px; color: var(--text-muted);">
+            请导入“小题分明细”Excel文件。系统将自动解析所有工作表(Sheet)，每个工作表代表一个科目。
+        </p>
+
+        <div class="main-card-wrapper" style="margin-bottom: 20px;">
+            <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 0; flex-wrap: wrap;">
+                <label for="item-analysis-uploader" class="upload-label" style="padding: 10px 16px; background-color: var(--primary-color); color: white;">
+                    📊 导入小题分明细 Excel
+                </label>
+                <input type="file" id="item-analysis-uploader" accept=".xlsx, .xls, .csv" style="display: none;">
+                
+                <button id="item-analysis-config-btn" class="sidebar-button" style="background-color: var(--color-orange); margin-left: 15px; display: none;">
+                    ⚙️ 配置题目
+                </button>
+                <span id="item-analysis-status" style="margin-left: 15px; color: var(--text-muted);"></span>
+            </div>
+        </div>
+
+        <div id="item-analysis-results" style="display: none;">
+            <div class="main-card-wrapper" style="margin-bottom: 20px;">
+                <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 0; margin-bottom: 0; flex-wrap: wrap;">
+                    
+                    <label for="item-subject-select" style="margin-left: 0;">科目:</label>
+                    <select id="item-subject-select" class="sidebar-select" style="width: auto; min-width: 150px; margin-right: 15px;"></select>
+                    
+                    <label for="item-class-filter">班级:</label>
+                    <select id="item-class-filter" class="sidebar-select" style="width: auto; min-width: 150px; margin-right: 15px;">
+                        <option value="ALL">-- 全体 --</option>
+                    </select>
+
+                    <label for="item-layer-groups">学生分层数:</label>
+                    <select id="item-layer-groups" class="sidebar-select" style="width: auto;">
+                        <option value="10">10层 (高-低)</option>
+                        <option value="5">5层 (高-低)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="item-kpi-grid" class="kpi-grid" style="margin-bottom: 20px;"></div>
+            
+            
+            <h3 style="margin-top: 30px;">📊 各大题 (文字/字母) 分析</h3>
+            <div class="main-card-wrapper" style="gap: 20px; margin-bottom: 20px;">
+                <div class="controls-bar chart-controls" style="padding: 0; border: none;">
+                    <label for="item-major-metric-select">选择指标:</label>
+                    <select id="item-major-metric-select" class="sidebar-select" style="width: auto;">
+                        <option value="difficulty">难度 (得分率)</option>
+                        <option value="discrimination">区分度</option>
+                    </select>
+                </div>
+                <div class="chart-container" id="item-chart-major" style="height: 400px;"></div>
+            </div>
+
+            <h3 style="margin-top: 30px;">🔬 各小题 (数字) 分析</h3>
+            <div class="main-card-wrapper" style="gap: 20px; margin-bottom: 20px;">
+                <div class="controls-bar chart-controls" style="padding: 0; border: none;">
+                    <label for="item-minor-metric-select">选择指标:</label>
+                    <select id="item-minor-metric-select" class="sidebar-select" style="width: auto;">
+                        <option value="difficulty">难度 (得分率)</option>
+                        <option value="discrimination">区分度</option>
+                    </select>
+                </div>
+                <div class="chart-container" id="item-chart-minor" style="height: 400px;"></div>
+            </div>
+
+            <h3 style="margin-top: 30px;">📉 小题得分率分层对比</h3>
+            <div class="main-card-wrapper" style="margin-bottom: 20px;">
+                <p style="color: var(--text-muted); font-size: 0.9em; margin-top: 0;">
+                    柱状图为全体学生得分率，折线图为按总分分层后各层学生的得分率 (G1为最高分层)。
+                </p>
+                <div class="chart-container" id="item-chart-layered" style="height: 500px;"></div>
+            </div>
+            
+            <h3 style="margin-top: 30px;">📈 知识点掌握情况 (分层对比)</h3>
+            <div class="main-card-wrapper" style="margin-bottom: 20px;">
+                <p style="color: var(--text-muted); font-size: 0.9em; margin-top: 0;">
+                    对比不同分数层 (G1为最高分层) 在各个知识点上的得分率。
+                </p>
+                <div class="chart-container" id="item-chart-knowledge" style="height: 500px;"></div>
+            </div>
+
+            <h3 style="margin-top: 30px;">🎯 学生个体知识点诊断表</h3>
+            <div class="main-card-wrapper" style="margin-bottom: 20px;">
+                
+                <div class="controls-bar chart-controls" style="padding: 0; border: none; flex-wrap: wrap; justify-content: space-between;">
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        
+                        <label for="item-outlier-type-filter">题目类型:</label>
+                        <select id="item-outlier-type-filter" class="sidebar-select" style="width: auto;">
+                            <option value="all">大题+小题</option>
+                            <option value="minor">仅小题</option>
+                            <option value="major">仅大题</option>
+                        </select>
+                        
+                        <label for="item-outlier-sort" style="margin-left: 15px;">排序方式:</label>
+                        <select id="item-outlier-sort" class="sidebar-select" style="width: auto;">
+                            <option value="weakness">按“最短板”排序 (高分低能)</option>
+                            <option value="strength">按“最亮点”排序 (低分高能)</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <label for="item-outlier-search">索引学生:</label>
+                        <input type="text" id="item-outlier-search" placeholder="输入姓名或考号..." style="width: 150px;">
+                    </div>
+                </div>
+
+                <p style="color: var(--text-muted); font-size: 0.9em; margin-top: 0;">
+                    “偏差” = 学生知识点得分率 - 该层平均知识点得分率。 (点击学生查看题目详情)
+                </p>
+                <div class="table-container" id="item-outlier-table-container" style="max-height: 600px; overflow-y: auto;">
+                </div>
+                
+                <div id="item-student-detail-container" style="display: none; margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 20px;">
+                </div>
+
+            </div>
+
+        </div>
+    `;
+
+    // 2. 绑定 DOM 元素 (只绑定一次)
+    const uploader = document.getElementById('item-analysis-uploader');
+    const statusLabel = document.getElementById('item-analysis-status');
+    const subjectSelect = document.getElementById('item-subject-select');
+    const classFilter = document.getElementById('item-class-filter');
+    const configBtn = document.getElementById('item-analysis-config-btn');
+    const minorMetricSelect = document.getElementById('item-minor-metric-select');
+    const majorMetricSelect = document.getElementById('item-major-metric-select');
+    const layerGroupSelect = document.getElementById('item-layer-groups');
+    const outlierTypeFilter = document.getElementById('item-outlier-type-filter');
+    const outlierSortSelect = document.getElementById('item-outlier-sort');
+    const outlierSearch = document.getElementById('item-outlier-search');
+    const outlierTableContainer = document.getElementById('item-outlier-table-container');
+
+    
+    // 3. 辅助函数来填充UI (不变)
+    const populateItemAnalysisUI = (itemData) => {
+        const subjects = Object.keys(itemData);
+        if (subjects.length === 0) {
+            document.getElementById('item-analysis-results').style.display = 'none';
+            configBtn.style.display = 'none';
+            return;
+        }
+
+        document.getElementById('item-analysis-results').style.display = 'block';
+        configBtn.style.display = 'inline-block';
+        subjectSelect.innerHTML = subjects.map(s => `<option value="${s}">${s}</option>`).join('');
+        
+        renderItemAnalysisCharts(); 
+    };
+
+    // 4. 绑定文件上传事件 (不变)
+    uploader.addEventListener('change', async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        statusLabel.innerText = `🔄 正在解析 ${file.name}...`;
+        try {
+            const itemData = await loadItemAnalysisExcel(file);
+            G_ItemAnalysisData = itemData; 
+            localStorage.setItem('G_ItemAnalysisData', JSON.stringify(itemData));
+            const subjects = Object.keys(itemData);
+            if (subjects.length === 0) {
+                throw new Error("在文件中未找到任何包含有效数据的工作表。");
+            }
+            statusLabel.innerText = `✅ 解析成功！共找到 ${subjects.length} 个科目。`;
+            populateItemAnalysisUI(itemData);
+        } catch (err) {
+            console.error(err);
+            statusLabel.innerText = `❌ 解析失败: ${err.message}`;
+            alert(`解析失败: ${err.message}`);
+        }
+    });
+    
+    // 5. 绑定下拉框切换事件 (主触发器) (不变)
+    subjectSelect.addEventListener('change', () => {
+        classFilter.value = 'ALL';
+        layerGroupSelect.value = '10';
+        minorMetricSelect.value = 'difficulty';
+        majorMetricSelect.value = 'difficulty';
+        outlierTypeFilter.value = 'all';
+        outlierSortSelect.value = 'weakness';
+        outlierSearch.value = '';
+        renderItemAnalysisCharts(); 
+    });
+
+    classFilter.addEventListener('change', () => {
+        renderItemAnalysisCharts();
+    });
+
+    layerGroupSelect.addEventListener('change', () => {
+        drawItemAnalysisLayeredChart();
+        drawItemAnalysisKnowledgeChart();
+        drawItemAnalysisOutlierTable();
+    });
+
+    // 6. 绑定指标下拉框切换事件 (不变)
+    minorMetricSelect.addEventListener('change', () => {
+        drawItemAnalysisChart('minor');
+    });
+    majorMetricSelect.addEventListener('change', () => {
+        drawItemAnalysisChart('major');
+    });
+
+    // 7. 绑定诊断表 (不变)
+    outlierTypeFilter.addEventListener('change', () => {
+        drawItemAnalysisOutlierTable();
+    });
+    outlierSortSelect.addEventListener('change', () => {
+        drawItemAnalysisOutlierTable();
+    });
+    outlierSearch.addEventListener('input', () => {
+        drawItemAnalysisOutlierTable();
+    });
+
+    // 8. 绑定诊断表 *点击* 事件 (不变)
+    outlierTableContainer.addEventListener('click', (e) => {
+        const row = e.target.closest('tr[data-id]');
+        if (!row) return;
+
+        const studentId = row.dataset.id;
+        const studentName = row.dataset.name;
+        const studentLayer = row.dataset.layer;
+        const questionType = document.getElementById('item-outlier-type-filter').value;
+
+        outlierTableContainer.querySelectorAll('tr.active').forEach(tr => tr.classList.remove('active'));
+        row.classList.add('active');
+
+        drawItemStudentDetailTable(studentId, studentName, studentLayer, questionType);
+    });
+
+    // 9. 绑定配置按钮和模态框事件 (不变)
+    configBtn.addEventListener('click', populateItemAnalysisConfigModal);
+    document.getElementById('item-config-modal-close-btn').addEventListener('click', () => {
+        document.getElementById('item-analysis-config-modal').style.display = 'none';
+    });
+    document.getElementById('item-config-modal-save-btn').addEventListener('click', () => {
+        saveItemAnalysisConfigFromModal();
+        renderItemAnalysisCharts(); 
+    });
+
+    // 10. 模块加载时：尝试从缓存加载 (不变)
+    try {
+        const storedConfig = localStorage.getItem('G_ItemAnalysisConfig');
+        if (storedConfig) {
+            G_ItemAnalysisConfig = JSON.parse(storedConfig);
+        }
+        
+        const storedData = localStorage.getItem('G_ItemAnalysisData');
+        if (storedData) {
+            const itemData = JSON.parse(storedData);
+            G_ItemAnalysisData = itemData; 
+            statusLabel.innerText = "✅ 已从浏览器缓存加载数据。";
+            populateItemAnalysisUI(itemData);
+        } else {
+            statusLabel.innerText = "请导入小题分明细 Excel。";
+        }
+    } catch (e) {
+        console.error("加载小题分缓存失败:", e);
+        statusLabel.innerText = "缓存加载失败，请重新导入。";
+        localStorage.removeItem('G_ItemAnalysisData');
+        localStorage.removeItem('G_ItemAnalysisConfig');
+    }
+}
+
+/**
+ * 13.2. [核心] 解析小题分 Excel 文件
+ * * [!! 修正版 7 !!] - 2025-11-11
+ * - (Bug) 增加了 .slice(..., -3) 来移除最后三行非学生数据。
+ * - (其余 Bug 修复保持不变)
+ */
+function loadItemAnalysisExcel(file) {
+    return new Promise((resolve, reject) => {
+
+        // [!! 内部辅助函数 !!] (不变)
+        const _calculateQuestionStats = (qNames, scoreType, processedData) => {
+            const stats = {};
+            for (const qName of qNames) {
+                const qScores = [];
+                const tScores = [];
+                processedData.forEach(s => {
+                    const qScore = s[scoreType][qName]; 
+                    const tScore = s.totalScore;
+                    if (typeof qScore === 'number' && !isNaN(qScore) && typeof tScore === 'number' && !isNaN(tScore)) {
+                        qScores.push(qScore);
+                        tScores.push(tScore);
+                    }
+                });
+                if (qScores.length === 0) continue; 
+                const qAvg = qScores.reduce((a, b) => a + b, 0) / qScores.length;
+                const maxQScore = Math.max(...qScores);
+                const qDifficulty = (maxQScore > 0) ? (qAvg / maxQScore) : 0;
+                const qDiscrimination = calculateCorrelation(qScores, tScores);
+                stats[qName] = {
+                    avg: parseFloat(qAvg.toFixed(2)),
+                    maxScore: maxQScore, 
+                    difficulty: parseFloat(qDifficulty.toFixed(2)),
+                    discrimination: parseFloat(qDiscrimination.toFixed(3))
+                };
+            }
+            return stats;
+        };
+        
+        // --- FileReader 开始 ---
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const allResults = {};
+
+                for (const sheetName of workbook.SheetNames) {
+                    const worksheet = workbook.Sheets[sheetName];
+                    const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+                    
+                    if (rawData.length < 5) { // (至少1表头 + 1数据 + 3统计行)
+                        console.warn(`工作表 "${sheetName}" 数据行数不足，已跳过。`);
+                        continue;
+                    }
+
+                    let keyRowIndex = -1;
+                    const REQUIRED_METRICS = ["姓名", "班级", "总分"];
+                    for (let i = 0; i < Math.min(rawData.length, 5); i++) {
+                        const row = rawData[i].map(String).map(s => s.trim());
+                        const foundCount = REQUIRED_METRICS.filter(metric => row.includes(metric)).length;
+                        if (foundCount === REQUIRED_METRICS.length) {
+                            keyRowIndex = i;
+                            break;
+                        }
+                    }
+                    if (keyRowIndex === -1) {
+                        console.warn(`工作表 "${sheetName}" 缺少关键字段 (${REQUIRED_METRICS.join(',')}), 已跳过。`);
+                        continue;
+                    }
+
+                    const keyHeader = rawData[keyRowIndex].map(String).map(s => s.trim());
+                    const studentDataStartRow = keyRowIndex + 1;
+                    const colMap = {};
+                    const majorQuestionColumns = [];
+                    const minorQuestionColumns = [];
+                    const isMinorQuestion = /^\d/; // (以数字开头)
+                    let foundTotalScore = false;
+
+                    for (let i = 0; i < keyHeader.length; i++) {
+                        const key = keyHeader[i];
+                        if (key === "") continue;
+                        if (key === "考号") { colMap[i] = "id"; continue; }
+                        if (key === "姓名") { colMap[i] = "name"; continue; }
+                        if (key === "班级") { colMap[i] = "class"; continue; }
+                        if (key === "总分") {
+                            colMap[i] = "totalScore";
+                            foundTotalScore = true;
+                            continue;
+                        }
+                        const knownInfoCols = ["学校", "班级排名", "年级排名", "准考证号", "学生属性", "班次", "校次", "客观题", "主观题", "教师", "阅卷班级", "校次进退步", "班次进退步"];
+                        
+                        if (foundTotalScore && !knownInfoCols.includes(key)) {
+                            const qName = String(key);
+                            if (isMinorQuestion.test(qName)) {
+                                colMap[i] = "q_minor_" + qName;
+                                minorQuestionColumns.push(qName);
+                            } else {
+                                colMap[i] = "q_major_" + qName;
+                                majorQuestionColumns.push(qName);
+                            }
+                        }
+                    }
+
+                    // 4. 解析学生数据行
+                    // [!! 修正 !!] (Bug) 移除最后三行 (非学生数据)
+                    const studentRows = rawData.slice(studentDataStartRow, -3);
+                    const processedData = [];
+                    
+                    for (const row of studentRows) {
+                        const student = { minorScores: {}, majorScores: {} };
+                        let hasName = false;
+                        for (const colIndex in colMap) {
+                            const key = colMap[colIndex];
+                            const rawValue = row[colIndex];
+                            if (key.startsWith("q_minor_")) {
+                                const qName = key.substring(8);
+                                const score = parseFloat(rawValue);
+                                student.minorScores[qName] = isNaN(score) ? null : score;
+                            } else if (key.startsWith("q_major_")) {
+                                const qName = key.substring(8);
+                                const score = parseFloat(rawValue);
+                                student.majorScores[qName] = isNaN(score) ? null : score;
+                            } else if (key === "totalScore") {
+                                const score = parseFloat(rawValue);
+                                student.totalScore = isNaN(score) ? null : score;
+                            } else {
+                                const value = String(rawValue || "").trim();
+                                student[key] = value;
+                                if (key === 'name' && value) hasName = true;
+                            }
+                        }
+                        if (!student.id && student.name) student.id = student.name;
+                        
+                        // [!! 修正 !!] 确保学生有姓名 和 有效的总分
+                        if (student.id && hasName && student.totalScore !== null) {
+                            processedData.push(student);
+                        }
+                    }
+                    
+                    if (processedData.length === 0) {
+                        console.warn(`工作表 "${sheetName}" 解析完成，但未找到有效学生数据。`);
+                        continue;
+                    }
+                    
+                    const minorQuestionStats = _calculateQuestionStats(minorQuestionColumns, 'minorScores', processedData);
+                    const majorQuestionStats = _calculateQuestionStats(majorQuestionColumns, 'majorScores', processedData);
+                    
+                    allResults[sheetName] = {
+                        students: processedData,
+                        minorQuestions: minorQuestionColumns,
+                        majorQuestions: majorQuestionColumns,
+                        minorStats: minorQuestionStats,
+                        majorStats: majorQuestionStats
+                    };
+                }
+                resolve(allResults);
+            } catch (err) {
+                console.error(err);
+                reject(new Error("文件解析失败: ".concat(err.message || "未知错误。")));
+            }
+        };
+        reader.onerror = (err) => reject(new Error("文件读取失败: ".concat(err)));
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+/**
+ * 13.3. 渲染小题分析图表
+ * * [!! 修正版 11 !!] - 2025-11-11
+ * - (Feature) 增加隐藏“学生题目详情表”的逻辑。
+ */
+function renderItemAnalysisCharts() {
+    const selectedSubject = document.getElementById('item-subject-select').value;
+    const selectedClass = document.getElementById('item-class-filter').value;
+    
+    // [!! NEW (Feature) !!] 切换科目/班级时，隐藏学生详情
+    const detailContainer = document.getElementById('item-student-detail-container');
+    if (detailContainer) detailContainer.style.display = 'none';
+    
+    if (!G_ItemAnalysisData || !G_ItemAnalysisData[selectedSubject]) {
+        // ... (错误处理) ...
+        document.getElementById('item-chart-minor').innerHTML = "";
+        document.getElementById('item-chart-major').innerHTML = "";
+        document.getElementById('item-chart-layered').innerHTML = "";
+        document.getElementById('item-chart-knowledge').innerHTML = "";
+        document.getElementById('item-outlier-table-container').innerHTML = "";
+        document.getElementById('item-kpi-grid').innerHTML = "";
+        return;
+    }
+    const data = G_ItemAnalysisData[selectedSubject];
+    const allStudents = data.students || [];
+
+    // 1. 填充班级筛选器
+    populateItemClassFilter(allStudents);
+
+    // 2. 获取筛选后的学生
+    const filteredStudents = (selectedClass === 'ALL')
+        ? allStudents
+        : allStudents.filter(s => s.class === selectedClass);
+    
+    // 3. 渲染KPIs (使用筛选后的学生)
+    const kpiContainer = document.getElementById('item-kpi-grid');
+    const validStudents = filteredStudents.filter(s => typeof s.totalScore === 'number' && !isNaN(s.totalScore));
+    const studentScores = validStudents.map(s => s.totalScore);
+
+    let avgTotal = 0;
+    let maxTotal = 0;
+    let minTotal = 0;
+
+    if (studentScores.length > 0) {
+        avgTotal = studentScores.reduce((a, b) => a + b, 0) / studentScores.length;
+        maxTotal = Math.max(...studentScores);
+        minTotal = Math.min(...studentScores);
+    }
+
+    kpiContainer.innerHTML = `
+        <div class="kpi-card"><h3>科目</h3><div class="value">${selectedSubject}</div></div>
+        <div class="kpi-card"><h3>参考学生数</h3><div class="value">${validStudents.length}</div></div>
+        <div class="kpi-card"><h3>平均分</h3><div class="value">${avgTotal.toFixed(2)}</div></div>
+        <div class="kpi-card"><h3>最高分</h3><div class="value">${maxTotal}</div></div>
+        <div class="kpi-card"><h3>最低分</h3><div class="value">${minTotal}</div></div>
+        <div class="kpi-card"><h3>大题数量</h3><div class="value">${(data.majorQuestions || []).length}</div></div>
+        <div class="kpi-card"><h3>小题数量</h3><div class="value">${(data.minorQuestions || []).length}</div></div>
+    `;
+
+    // 4. 延迟执行绘图
+    setTimeout(() => {
+        drawItemAnalysisChart('major');
+        drawItemAnalysisChart('minor');
+        drawItemAnalysisLayeredChart();
+        drawItemAnalysisKnowledgeChart();
+        drawItemAnalysisOutlierTable();
+    }, 0); 
+}
+
+/**
+ * 13.4. (ECharts) 渲染小题分析条形图 (带缩放)
+ * * [!! 修正版 3 !!] - (此函数保持不变)
+ * - (Bug 1) 增加了对 qNames 的空值检查。
+ * - (Bug 1) 修正了当 qNames.length 为 0 时，end 属性计算为 Infinity 的问题。
+ */
+function renderItemAnalysisBarChart(elementId, title, qNames, data, yAxisRange) {
+    const chartDom = document.getElementById(elementId);
+    if (!chartDom) return;
+
+    // [!! 修正 !!] (Bug 1)
+    if (!qNames || qNames.length === 0) {
+        chartDom.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding-top: 50px;">本科目无此类题目数据。</p>`;
+        if (echartsInstances[elementId]) {
+            echartsInstances[elementId].dispose();
+        }
+        return;
+    }
+
+    if (echartsInstances[elementId]) {
+        echartsInstances[elementId].dispose();
+    }
+    echartsInstances[elementId] = echarts.init(chartDom);
+
+    const endPercent = (qNames.length > 30) ? (30 / qNames.length * 100) : 100;
+
+    const option = {
+        title: {
+            text: title,
+            left: 'center',
+            textStyle: { fontSize: 16, fontWeight: 'normal' }
+        },
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: (params) => {
+                const p = params[0];
+                return `<strong>题号: ${p.name}</strong><br/>数值: ${p.value.toFixed(3)}`; // [!!] 修正错字
+            }
+        },
+        grid: { left: '3%', right: '4%', bottom: '20%', containLabel: true },
+        xAxis: {
+            type: 'category',
+            data: qNames,
+            name: '题号', // [!!] 修正错字
+            axisLabel: {
+                interval: 'auto', 
+                rotate: 30
+            }
+        },
+        yAxis: {
+            type: 'value',
+            min: yAxisRange[0],
+            max: yAxisRange[1]
+        },
+        dataZoom: [
+            {
+                type: 'slider',
+                xAxisIndex: [0],
+                start: 0,
+                end: endPercent, 
+                bottom: 10,
+                height: 20
+            },
+            {
+                type: 'inside',
+                xAxisIndex: [0]
+            }
+        ],
+        series: [{
+            name: title,
+            type: 'bar',
+            data: data,
+            barWidth: '60%',
+            itemStyle: {
+                color: '#007bff'
+            }
+        }],
+        toolbox: {
+            show: true,
+            feature: {
+                saveAsImage: { show: true, title: '保存为图片' }
+            }
+        }
+    };
+
+    echartsInstances[elementId].setOption(option);
+}
+
+// =====================================================================
+// [!! NEW !!] 模块十三：新功能函数 (Feature 2 & 3)
+// =====================================================================
+
+/**
+ * 13.5. [NEW] (Feature 3) 
+ * 获取重新计算后的统计数据 (应用了用户配置的满分)
+ */
+function getRecalculatedItemStats(subjectName) {
+    if (!G_ItemAnalysisData || !G_ItemAnalysisData[subjectName]) {
+        return { minorStats: {}, majorStats: {}, minorQuestions: [], majorQuestions: [] };
+    }
+    
+    // 1. 获取原始数据和配置
+    const rawData = G_ItemAnalysisData[subjectName];
+    const config = G_ItemAnalysisConfig[subjectName] || {};
+    
+    // 2. 创建新的统计对象
+    const newMinorStats = {};
+    const newMajorStats = {};
+
+    // 3. 循环小题 (minor)
+    (rawData.minorQuestions || []).forEach(qName => {
+        const rawStat = rawData.minorStats[qName];
+        if (!rawStat) return;
+        
+        const qConfig = config[qName] || {};
+        
+        // [!! 核心 !!] 满分 = 手动配置的满分 || 自动检测的满分
+        const fullScore = qConfig.fullScore || rawStat.maxScore;
+        const avg = rawStat.avg;
+
+        // [!! 核心 !!] 重新计算难度
+        const newDifficulty = (fullScore > 0) ? parseFloat((avg / fullScore).toFixed(2)) : 0;
+        
+        newMinorStats[qName] = {
+            ...rawStat, // 复制原始数据 (avg, maxScore, discrimination)
+            difficulty: newDifficulty, // 覆盖难度
+            manualFullScore: qConfig.fullScore // 存储手动满分
+        };
+    });
+
+    // 4. 循环大题 (major)
+    (rawData.majorQuestions || []).forEach(qName => {
+        const rawStat = rawData.majorStats[qName];
+        if (!rawStat) return;
+        
+        const qConfig = config[qName] || {};
+        const fullScore = qConfig.fullScore || rawStat.maxScore;
+        const avg = rawStat.avg;
+        const newDifficulty = (fullScore > 0) ? parseFloat((avg / fullScore).toFixed(2)) : 0;
+        
+        newMajorStats[qName] = {
+            ...rawStat,
+            difficulty: newDifficulty,
+            manualFullScore: qConfig.fullScore
+        };
+    });
+
+    return {
+        minorStats: newMinorStats,
+        majorStats: newMajorStats,
+        minorQuestions: rawData.minorQuestions || [],
+        majorQuestions: rawData.majorQuestions || []
+    };
+}
+
+/**
+ * 13.6. [NEW] (Feature 2) 
+ * 绘制单个小题/大题图表 (根据下拉框选择)
+ */
+function drawItemAnalysisChart(type) { // type is 'minor' or 'major'
+    const subjectName = document.getElementById('item-subject-select').value;
+    if (!subjectName) return;
+
+    // 1. 获取重新计算后的统计数据 (已应用配置)
+    const stats = getRecalculatedItemStats(subjectName);
+
+    // 2. 根据类型 (minor/major) 选择数据源
+    const isMinor = (type === 'minor');
+    const metricSelect = document.getElementById(isMinor ? 'item-minor-metric-select' : 'item-major-metric-select');
+    const chartId = isMinor ? 'item-chart-minor' : 'item-chart-major';
+    
+    const qNames = isMinor ? stats.minorQuestions : stats.majorQuestions;
+    const statsData = isMinor ? stats.minorStats : stats.majorStats;
+
+    // 3. 根据下拉框选择指标
+    const metric = metricSelect.value; // 'difficulty' or 'discrimination'
+    
+    // 4. 提取数据
+    const data = qNames.map(qName => {
+        return (statsData[qName] && statsData[qName][metric] !== undefined) ? statsData[qName][metric] : 0;
+    });
+
+    // 5. 准备图表参数
+    let title, yAxisRange;
+    if (metric === 'difficulty') {
+        title = `各${isMinor ? '小' : '大'}题难度 (得分率)`;
+        yAxisRange = [0, 1];
+    } else {
+        title = `各${isMinor ? '小' : '大'}题区分度`;
+        yAxisRange = [-0.2, 1];
+    }
+    
+    // 6. 渲染图表
+    renderItemAnalysisBarChart(chartId, title, qNames, data, yAxisRange);
+}
+
+/**
+ * 13.7. [NEW] (Feature 3) 
+ * 填充配置弹窗
+ */
+function populateItemAnalysisConfigModal() {
+    const subjectName = document.getElementById('item-subject-select').value;
+    if (!subjectName) {
+        alert("无可用科目！");
+        return;
+    }
+
+    // 1. 获取原始数据 和 已存配置
+    const rawData = G_ItemAnalysisData[subjectName];
+    const subjectConfig = G_ItemAnalysisConfig[subjectName] || {};
+    
+    // 2. 获取重新计算后的数据 (用于显示 placeholder)
+    const recalculatedStats = getRecalculatedItemStats(subjectName);
+    
+    const tableBody = document.getElementById('item-config-table-body');
+    let html = '';
+
+    // 辅助函数
+    const createRow = (qName, type, stat) => {
+        if (!stat) return '';
+        const qConfig = subjectConfig[qName] || {};
+        
+        // 满分：placeholder 是自动检测的，value 是用户手填的
+        const autoFull = stat.maxScore;
+        const manualFull = qConfig.fullScore || '';
+        
+        const content = qConfig.content || '';
+        
+        return `
+            <tr data-q-name="${qName}">
+                <td><strong>${qName}</strong> (${type})</td>
+                <td>
+                    <input type="number" 
+                           class="item-config-full"
+                           placeholder="自动: ${autoFull}" 
+                           value="${manualFull}" 
+                           style="width: 100px;">
+                </td>
+                <td>
+                    <input type="text" 
+                           class="item-config-content"
+                           value="${content}" 
+                           style="width: 100%;">
+                </td>
+            </tr>
+        `;
+    };
+
+    // 3. 填充大题
+    (recalculatedStats.majorQuestions || []).forEach(qName => {
+        html += createRow(qName, '大题', recalculatedStats.majorStats[qName]);
+    });
+
+    // 4. 填充小题
+    (recalculatedStats.minorQuestions || []).forEach(qName => {
+        html += createRow(qName, '小题', recalculatedStats.minorStats[qName]);
+    });
+    
+    tableBody.innerHTML = html;
+
+    // 5. 显示弹窗
+    const modal = document.getElementById('item-analysis-config-modal');
+    document.getElementById('item-config-modal-title').innerText = `配置题目详情 (科目: ${subjectName})`;
+    modal.dataset.subjectName = subjectName; // [!! 核心 !!] 存储当前科目名
+    modal.style.display = 'flex';
+}
+
+/**
+ * 13.8. [NEW] (Feature 3) 
+ * 保存配置弹窗
+ */
+function saveItemAnalysisConfigFromModal() {
+    const modal = document.getElementById('item-analysis-config-modal');
+    const subjectName = modal.dataset.subjectName;
+    if (!subjectName) return;
+
+    // 1. 获取全量配置
+    let allConfigs = G_ItemAnalysisConfig;
+    let subjectConfig = allConfigs[subjectName] || {};
+
+    // 2. 遍历弹窗中的每一行
+    const rows = document.getElementById('item-config-table-body').querySelectorAll('tr');
+    rows.forEach(row => {
+        const qName = row.dataset.qName;
+        const manualFullInput = row.querySelector('.item-config-full').value;
+        const contentInput = row.querySelector('.item-config-content').value;
+        
+        const manualFull = parseFloat(manualFullInput);
+
+        // [!! 核心 !!] 如果输入了有效数字，则保存；否则保存 undefined (以触发回退)
+        subjectConfig[qName] = {
+            fullScore: (!isNaN(manualFull) && manualFull > 0) ? manualFull : undefined,
+            content: contentInput || undefined
+        };
+    });
+    
+    // 3. 更新全局变量和 localStorage
+    allConfigs[subjectName] = subjectConfig;
+    G_ItemAnalysisConfig = allConfigs;
+    localStorage.setItem('G_ItemAnalysisConfig', JSON.stringify(allConfigs));
+    
+    // 4. 关闭弹窗
+    modal.style.display = 'none';
+
+    // 5. [!! 核心 !!] 立即重绘当前科目的图表
+    renderItemAnalysisCharts();
+}
+
+// =====================================================================
+// [!! NEW !!] 模块十三：分层对比图 (Feature 4)
+// =====================================================================
+
+/**
+ * 13.9. [MODIFIED] (Feature 4) 
+ * 计算分层后的小题统计数据
+ * * [!! 修正版 12 !!] - 2025-11-11
+ * - (Bug 修复) 修正了 groupStats (层均分) 只计算了小题，未计算大题的问题。
+ * - (Bug 修复) 这导致了学生详情表中大题的 "层均得分率" 和 "偏差" 显示为 NaN。
+ */
+function calculateLayeredItemStats(subjectName, numGroups, filteredStudents) {
+    // 1. 获取原始学生数据 (已在外部筛选)
+    if (!G_ItemAnalysisData || !G_ItemAnalysisData[subjectName]) {
+        return { groupStats: {}, qNames: [], overallDifficulty: {} };
+    }
+    const rawData = G_ItemAnalysisData[subjectName];
+    
+    // [!! 修正 !!] "qNames" 仅用于小题图表X轴，保持不变
+    const qNames = rawData.minorQuestions || []; 
+    
+    // 2. 获取重新计算后的 "满分" 配置
+    const recalculatedStats = getRecalculatedItemStats(subjectName);
+    const overallDifficulty = {}; // (用于柱状图)
+    
+    // 3. 获取有效学生并按总分排序 (高 -> 低)
+    const validStudents = (filteredStudents || [])
+        .filter(s => typeof s.totalScore === 'number' && !isNaN(s.totalScore))
+        .sort((a, b) => b.totalScore - a.totalScore);
+
+    if (validStudents.length === 0) {
+        return { groupStats: {}, qNames: qNames, overallDifficulty: {} };
+    }
+
+    // 4. 将学生分层 (G1, G2, ...)
+    const groupSize = Math.ceil(validStudents.length / numGroups);
+    const studentGroups = [];
+    for (let i = 0; i < numGroups; i++) {
+        const group = validStudents.slice(i * groupSize, (i + 1) * groupSize);
+        if (group.length > 0) { 
+            studentGroups.push(group);
+        }
+    }
+    
+    // 5. [!! 修正 !!] (Bug 修复) 计算 *所有* 题目的层均分
+    const groupStats = {}; 
+
+    // (辅助函数)
+    const calculateGroupRates = (qNameList, scoreType, statsType) => {
+        if (!qNameList || qNameList.length === 0) return;
+
+        qNameList.forEach(qName => {
+            // (a) 获取该题的 "正确" 满分
+            const stat = recalculatedStats[statsType][qName];
+            if (!stat) return;
+            
+            const fullScore = stat.manualFullScore || stat.maxScore;
+            
+            if (!fullScore || fullScore === 0) {
+                studentGroups.forEach((_, index) => {
+                    const groupName = `G${index + 1}`;
+                    if (!groupStats[groupName]) groupStats[groupName] = {};
+                    groupStats[groupName][qName] = 0;
+                });
+                return;
+            }
+
+            // (b) 遍历所有层，计算该题在该层的平均得分率
+            studentGroups.forEach((group, index) => {
+                const groupName = `G${index + 1}`;
+                if (!groupStats[groupName]) groupStats[groupName] = {};
+
+                let totalScore = 0;
+                let validCount = 0;
+                group.forEach(student => {
+                    const score = student[scoreType][qName]; // 'minorScores' or 'majorScores'
+                    if (typeof score === 'number' && !isNaN(score)) {
+                        totalScore += score;
+                        validCount++;
+                    }
+                });
+                const avgScore = (validCount > 0) ? totalScore / validCount : 0;
+                const difficulty = parseFloat((avgScore / fullScore).toFixed(3));
+                groupStats[groupName][qName] = difficulty;
+            });
+        });
+    };
+    
+    // [!! 修正 !!] (Bug 修复) 同时计算小题和大题
+    calculateGroupRates(rawData.minorQuestions, 'minorScores', 'minorStats');
+    calculateGroupRates(rawData.majorQuestions, 'majorScores', 'majorStats');
+    
+    // 6. [!! 不变 !!] (Bug 修复)
+    // "overallDifficulty" 仅用于小题对比图的柱状图，所以 *只* 计算小题
+    qNames.forEach(qName => {
+        overallDifficulty[qName] = recalculatedStats.minorStats[qName]?.difficulty || 0;
+    });
+
+    return { groupStats, qNames, overallDifficulty };
+}
+
+/**
+ * 13.10. [MODIFIED] (Feature 4) 
+ * 绘制小题得分率分层对比图
+ * * [!! 修正版 11 !!] - 2025-11-11
+ * - (Bug 修复) 在 setOption 时添加 { notMerge: true }，解决折线图不显示的 Bug。
+ */
+function drawItemAnalysisLayeredChart() {
+    const chartDom = document.getElementById('item-chart-layered');
+    if (!chartDom) return;
+
+    if (echartsInstances['item-chart-layered']) {
+        echartsInstances['item-chart-layered'].dispose();
+    }
+    echartsInstances['item-chart-layered'] = echarts.init(chartDom);
+
+    // 1. 获取参数
+    const subjectName = document.getElementById('item-subject-select').value;
+    const selectedClass = document.getElementById('item-class-filter').value;
+    const numGroups = parseInt(document.getElementById('item-layer-groups').value);
+    
+    // 2. 获取筛选后的学生
+    const allStudents = G_ItemAnalysisData[subjectName]?.students || [];
+    const filteredStudents = (selectedClass === 'ALL')
+        ? allStudents
+        : allStudents.filter(s => s.class === selectedClass);
+    
+    // 3. [核心] 计算分层数据 (现在会返回正确的 overallDifficulty)
+    const { groupStats, qNames, overallDifficulty } = calculateLayeredItemStats(subjectName, numGroups, filteredStudents);
+
+    if (qNames.length === 0) {
+        chartDom.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding-top: 50px;">本科目无“小题”数据，无法生成分层图。</p>`;
+        return;
+    }
+
+    // 4. 准备 ECharts Series (不变)
+    const series = [];
+    const legendData = [];
+
+    series.push({
+        name: '全体得分率',
+        type: 'bar',
+        data: qNames.map(qName => overallDifficulty[qName]),
+        barWidth: '60%',
+        itemStyle: { opacity: 0.6, color: '#909399' },
+        z: 3 
+    });
+    legendData.push('全体得分率');
+
+    const lineColors = [
+        '#007bff', '#28a745', '#17a2b8', '#ffc107', '#fd7e14', 
+        '#6f42c1', '#dc3545', '#e83e8c', '#6c757d', '#343a40'
+    ];
+    
+    Object.keys(groupStats).forEach((groupName, index) => {
+        legendData.push(groupName);
+        series.push({
+            name: groupName,
+            type: 'line',
+            smooth: true,
+            data: qNames.map(qName => groupStats[groupName][qName] || 0),
+            color: lineColors[index % lineColors.length],
+            z: 10
+        });
+    });
+    
+    // 5. ECharts 配置 (不变)
+    const option = {
+        title: {
+            text: '小题得分率分层对比',
+            left: 'center',
+            textStyle: { fontSize: 16, fontWeight: 'normal' }
+        },
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+        legend: { data: legendData, top: 30, type: 'scroll' },
+        grid: { left: '3%', right: '4%', bottom: '20%', top: 70, containLabel: true },
+        xAxis: {
+            type: 'category',
+            data: qNames,
+            name: '小题题号',
+            axisLabel: { interval: 'auto', rotate: 30 }
+        },
+        yAxis: { type: 'value', name: '得分率', min: 0, max: 1 },
+        dataZoom: [
+            {
+                type: 'slider',
+                xAxisIndex: [0],
+                start: 0,
+                end: (qNames.length > 30) ? (30 / qNames.length * 100) : 100,
+                bottom: 10,
+                height: 20
+            },
+            {
+                type: 'inside',
+                xAxisIndex: [0]
+            }
+        ],
+        series: series
+    };
+
+    // [!! 修正 !!] (Bug 修复) 添加 notMerge: true
+    echartsInstances['item-chart-layered'].setOption(option, { notMerge: true });
+}
+
+// =====================================================================
+// [!! NEW !!] 模块十三：知识点分层图 (Feature 5)
+// =====================================================================
+
+/**
+ * 13.11. [MODIFIED] (Feature 5) 
+ * 计算分层后的知识点统计数据
+ * * [!! 修正版 12 !!] - 2025-11-11
+ * - (Feature) 签名变更，接收 questionType。
+ * - (Feature) 根据 questionType 筛选计算知识点得分率。
+ * - (Feature) 返回 studentsWithRates 以便下游函数复用。
+ */
+function calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents, questionType = 'all') {
+    // 1. 获取基础数据
+    if (!G_ItemAnalysisData || !G_ItemAnalysisData[subjectName]) {
+        return { groupStats: {}, knowledgePoints: [], studentsWithRates: [] }; // [!! 修正 !!]
+    }
+    const rawData = G_ItemAnalysisData[subjectName];
+    const subjectConfig = G_ItemAnalysisConfig[subjectName] || {};
+
+    // 2. [核心] 构建知识点 -> 题目的映射 (不变)
+    const knowledgeMap = {};
+    const itemToKnowledge = {};
+    for (const qName in subjectConfig) {
+        const content = subjectConfig[qName]?.content;
+        if (content) {
+            const kps = content.split(/[,;，；]/).map(k => k.trim()).filter(k => k);
+            kps.forEach(kp => {
+                if (!knowledgeMap[kp]) {
+                    knowledgeMap[kp] = [];
+                }
+                itemToKnowledge[qName] = kp;
+            });
+        }
+    }
+    const knowledgePoints = Object.keys(knowledgeMap);
+    if (knowledgePoints.length === 0) {
+        return { groupStats: {}, knowledgePoints: [], studentsWithRates: [] }; // [!! 修正 !!]
+    }
+
+    // 3. 获取重新计算后的满分 (不变)
+    const recalculatedStats = getRecalculatedItemStats(subjectName);
+
+    // 4. 获取排序后的学生
+    const validStudents = (filteredStudents || [])
+        .filter(s => typeof s.totalScore === 'number' && !isNaN(s.totalScore))
+        .sort((a, b) => b.totalScore - a.totalScore);
+    
+    if (validStudents.length === 0) {
+        return { groupStats: {}, knowledgePoints: knowledgePoints, studentsWithRates: [] }; // [!! 修正 !!]
+    }
+
+    // 5. [!! 修正 (Feature) !!] 计算每个学生在每个知识点上的得分率
+    validStudents.forEach(student => {
+        student.knowledgeRates = {};
+        const aggregates = {}; 
+        knowledgePoints.forEach(kp => { aggregates[kp] = { totalGot: 0, totalPossible: 0 }; });
+
+        // [!! 修正 !!] (Feature) 筛选小题
+        if (questionType === 'all' || questionType === 'minor') {
+            (rawData.minorQuestions || []).forEach(qName => {
+                const kp = itemToKnowledge[qName];
+                if (kp) {
+                    const stat = recalculatedStats.minorStats[qName];
+                    const score = student.minorScores[qName];
+                    const fullScore = stat?.manualFullScore || stat?.maxScore;
+                    if (typeof score === 'number' && !isNaN(score) && fullScore > 0) {
+                        aggregates[kp].totalGot += score;
+                        aggregates[kp].totalPossible += fullScore;
+                    }
+                }
+            });
+        }
+        
+        // [!! 修正 !!] (Feature) 筛选大题
+        if (questionType === 'all' || questionType === 'major') {
+            (rawData.majorQuestions || []).forEach(qName => {
+                const kp = itemToKnowledge[qName];
+                if (kp) {
+                    const stat = recalculatedStats.majorStats[qName];
+                    const score = student.majorScores[qName];
+                    const fullScore = stat?.manualFullScore || stat?.maxScore;
+                    if (typeof score === 'number' && !isNaN(score) && fullScore > 0) {
+                        aggregates[kp].totalGot += score;
+                        aggregates[kp].totalPossible += fullScore;
+                    }
+                }
+            });
+        }
+        
+        // (计算得分率)
+        for(const kp in aggregates) {
+            const agg = aggregates[kp];
+            student.knowledgeRates[kp] = (agg.totalPossible > 0) ? (agg.totalGot / agg.totalPossible) : null;
+        }
+    });
+
+    // 6. 将学生分层 (G1, G2, ...) (不变)
+    const groupSize = Math.ceil(validStudents.length / numGroups);
+    const studentGroups = [];
+    for (let i = 0; i < numGroups; i++) {
+        const group = validStudents.slice(i * groupSize, (i + 1) * groupSize);
+        if (group.length > 0) {
+            studentGroups.push(group);
+        }
+    }
+
+    // 7. [核心] 计算每层在每个知识点上的平均得分率 (不变)
+    const groupStats = {}; 
+    studentGroups.forEach((group, index) => {
+        const groupName = `G${index + 1}`;
+        groupStats[groupName] = {};
+        
+        knowledgePoints.forEach(kp => {
+            let totalRate = 0;
+            let validCount = 0;
+            group.forEach(student => {
+                const rate = student.knowledgeRates[kp];
+                if (rate !== null && !isNaN(rate)) {
+                    totalRate += rate;
+                    validCount++;
+                }
+            });
+            groupStats[groupName][kp] = (validCount > 0) ? (totalRate / validCount) : 0;
+        });
+    });
+    
+    // [!! 修正 !!] (Feature) 返回 studentsWithRates
+    return { groupStats, knowledgePoints, studentsWithRates: validStudents };
+}
+
+
+/**
+ * 13.12. [MODIFIED] (Feature 5) 
+ * 绘制知识点掌握情况分组柱状图
+ * * [!! 修正版 10 !!] - 2025-11-11
+ * - (Feature) 现在从DOM读取班级筛选器，并获取筛选后的学生。
+ */
+function drawItemAnalysisKnowledgeChart() {
+    const chartDom = document.getElementById('item-chart-knowledge');
+    if (!chartDom) return;
+
+    if (echartsInstances['item-chart-knowledge']) {
+        echartsInstances['item-chart-knowledge'].dispose();
+    }
+    echartsInstances['item-chart-knowledge'] = echarts.init(chartDom);
+
+    // 1. 获取参数
+    const subjectName = document.getElementById('item-subject-select').value;
+    const selectedClass = document.getElementById('item-class-filter').value; // [!! NEW !!]
+    const numGroups = parseInt(document.getElementById('item-layer-groups').value);
+
+    // [!! NEW (Feature) !!] 2. 获取筛选后的学生
+    const allStudents = G_ItemAnalysisData[subjectName]?.students || [];
+    const filteredStudents = (selectedClass === 'ALL')
+        ? allStudents
+        : allStudents.filter(s => s.class === selectedClass);
+
+    // 3. [核心] 计算分层数据 (传入筛选后的学生)
+    const { groupStats, knowledgePoints } = calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents);
+    
+    if (knowledgePoints.length === 0) {
+        chartDom.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding-top: 50px;">未找到已配置“考察内容”的题目，请先点击“配置题目”。</p>`;
+        return;
+    }
+
+    // 4. 准备 ECharts Series (不变)
+    const series = [];
+    const legendData = Object.keys(groupStats); 
+    const lineColors = [
+        '#007bff', '#28a745', '#17a2b8', '#ffc107', '#fd7e14', 
+        '#6f42c1', '#dc3545', '#e83e8c', '#6c757d', '#343a40'
+    ];
+
+    legendData.forEach((groupName, index) => {
+        series.push({
+            name: groupName,
+            type: 'bar',
+            barGap: 0, 
+            emphasis: { focus: 'series' },
+            data: knowledgePoints.map(kp => {
+                return parseFloat((groupStats[groupName][kp] || 0).toFixed(3));
+            }),
+            color: lineColors[index % lineColors.length]
+        });
+    });
+
+    // 5. ECharts 配置 (不变)
+    const option = {
+        title: {
+            text: '知识点掌握情况 (按总分分层)',
+            left: 'center',
+            textStyle: { fontSize: 16, fontWeight: 'normal' }
+        },
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        legend: { data: legendData, top: 30, type: 'scroll' },
+        grid: { left: '3%', right: '4%', bottom: '20%', top: 70, containLabel: true },
+        xAxis: {
+            type: 'category',
+            data: knowledgePoints,
+            name: '知识点 (考察内容)',
+            axisLabel: { interval: 'auto', rotate: 30 }
+        },
+        yAxis: { type: 'value', name: '得分率', min: 0, max: 1 },
+        dataZoom: [
+            {
+                type: 'slider',
+                xAxisIndex: [0],
+                start: 0,
+                end: (knowledgePoints.length > 20) ? (20 / knowledgePoints.length * 100) : 100,
+                bottom: 10,
+                height: 20
+            },
+            {
+                type: 'inside',
+                xAxisIndex: [0]
+            }
+        ],
+        series: series
+    };
+
+    echartsInstances['item-chart-knowledge'].setOption(option, { notMerge: true });
+}
+
+// =====================================================================
+// [!! NEW !!] 模块十三：学生个体诊断表 (Feature 6)
+// =====================================================================
+
+/**
+ * 13.13. [MODIFIED] (Feature 6) 
+ * 计算学生知识点偏差（短板/亮点）
+ * * [!! 修正版 12 !!] - 2025-11-11
+ * - (Feature) 签名变更，接收 studentsWithRates。
+ * - (Refactor) 移除了重复的学生获取和得分率计算。
+ */
+function calculateStudentKnowledgeOutliers(subjectName, numGroups, groupStats, knowledgePoints, studentsWithRates, questionType = 'all') {
+    // 1. 获取基础数据 (已在外部筛选)
+    if (!G_ItemAnalysisData || !G_ItemAnalysisData[subjectName]) {
+        return [];
+    }
+    
+    // 2. [!! 修正 !!] (Refactor) 直接使用传入的 studentsWithRates
+    const validStudents = studentsWithRates;
+    
+    if (validStudents.length === 0 || knowledgePoints.length === 0) {
+        return [];
+    }
+        
+    // (健壮性检查)
+    if (!validStudents[0] || !validStudents[0].knowledgeRates) {
+        console.error("calculateStudentKnowledgeOutliers: 依赖的学生知识点得分率未计算。");
+        return []; 
+    }
+    
+    // 3. 将学生分层 (G1, G2, ...)
+    const groupSize = Math.ceil(validStudents.length / numGroups);
+    const outlierList = [];
+    
+    for (let i = 0; i < validStudents.length; i++) {
+        const student = validStudents[i];
+        
+        // (a) 确定学生所在的层
+        const groupIndex = Math.floor(i / groupSize);
+        const groupName = `G${groupIndex + 1}`;
+        const layerAverages = groupStats[groupName];
+
+        if (!layerAverages) continue;
+
+        let worstDeviation = 0;
+        let worstKP = 'N/A';
+        let bestDeviation = 0;
+        let bestKP = 'N/A';
+
+        // (b) 遍历所有知识点，计算偏差
+        knowledgePoints.forEach(kp => {
+            const studentRate = student.knowledgeRates[kp];
+            const layerRate = layerAverages[kp];
+            
+            // [!! 修正 !!] 只有当学生和层级都有有效得分率时才比较
+            if (studentRate !== null && typeof studentRate === 'number' && typeof layerRate === 'number' && layerRate > 0) {
+                const deviation = studentRate - layerRate;
+                
+                if (deviation < worstDeviation) {
+                    worstDeviation = deviation;
+                    worstKP = kp;
+                }
+                if (deviation > bestDeviation) {
+                    bestDeviation = deviation;
+                    bestKP = kp;
+                }
+            }
+        });
+        
+        // (c) 存入列表
+        outlierList.push({
+            name: student.name,
+            id: student.id,
+            totalScore: student.totalScore,
+            layer: groupName,
+            worstKP: worstKP,
+            worstDeviation: worstDeviation,
+            bestKP: bestKP,
+            bestDeviation: bestDeviation
+        });
+    }
+
+    return outlierList;
+}
+/**
+ * 13.14. [MODIFIED] (Feature 6) 
+ * 绘制学生个体知识点诊断表
+ * * [!! 修正版 12 !!] - 2025-11-11
+ * - (Feature) 新增读取 "题目类型" (questionType) 筛选器。
+ * - (Feature) 将 questionType 传递给计算函数。
+ */
+function drawItemAnalysisOutlierTable() {
+    const tableContainer = document.getElementById('item-outlier-table-container');
+    if (!tableContainer) return;
+
+    const detailContainer = document.getElementById('item-student-detail-container');
+    if (detailContainer) detailContainer.style.display = 'none';
+
+    // 1. 获取参数
+    const subjectName = document.getElementById('item-subject-select').value;
+    const selectedClass = document.getElementById('item-class-filter').value;
+    const numGroups = parseInt(document.getElementById('item-layer-groups').value);
+    const sortType = document.getElementById('item-outlier-sort').value;
+    const searchQuery = document.getElementById('item-outlier-search').value.toLowerCase();
+    const questionType = document.getElementById('item-outlier-type-filter').value; // [!! NEW !!]
+    
+    // 2. 获取筛选后的学生
+    const allStudents = G_ItemAnalysisData[subjectName]?.students || [];
+    const filteredStudents = (selectedClass === 'ALL')
+        ? allStudents
+        : allStudents.filter(s => s.class === selectedClass);
+
+    // 3. [核心] 先调用知识点分层统计
+    // [!! 修正 !!] 传递 questionType
+    const { groupStats, knowledgePoints, studentsWithRates } = calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents, questionType);
+
+    if (knowledgePoints.length === 0) {
+        tableContainer.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding-top: 20px;">未找到已配置“考察内容”的题目，无法生成诊断表。</p>`;
+        G_ItemOutlierList = [];
+        return;
+    }
+
+    // 4. [核心] 再调用偏差计算
+    // [!! 修正 !!] 传递 questionType 和 studentsWithRates
+    G_ItemOutlierList = calculateStudentKnowledgeOutliers(subjectName, numGroups, groupStats, knowledgePoints, studentsWithRates, questionType);
+    
+    // 5. 根据搜索框过滤
+    const searchedList = (searchQuery)
+        ? G_ItemOutlierList.filter(s => 
+            s.name.toLowerCase().includes(searchQuery) || 
+            String(s.id).toLowerCase().includes(searchQuery)
+          )
+        : G_ItemOutlierList;
+        
+    // 6. 根据下拉框排序
+    if (sortType === 'weakness') {
+        searchedList.sort((a, b) => a.worstDeviation - b.worstDeviation);
+    } else {
+        searchedList.sort((a, b) => b.bestDeviation - a.bestDeviation);
+    }
+
+    // 7. 渲染表格 HTML (不变)
+    let html = ``;
+    if (searchedList.length === 0) {
+        html = `<p style="text-align: center; color: var(--text-muted); padding: 20px;">未找到符合条件的学生。</p>`;
+    } else {
+        html = `
+            <table>
+                <thead>
+                    <tr>
+                        <th>姓名</th>
+                        <th>层级</th>
+                        <th>总分</th>
+                        <th>最大短板 (知识点)</th>
+                        <th>短板偏差</th>
+                        <th>最大亮点 (知识点)</th>
+                        <th>亮点偏差</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${searchedList.map(s => `
+                        <tr data-id="${s.id}" data-name="${s.name}" data-layer="${s.layer}" style="cursor: pointer;">
+                            <td>${s.name}</td>
+                            <td><strong>${s.layer}</strong></td>
+                            <td>${s.totalScore}</td>
+                            
+                            <td>${s.worstKP}</td>
+                            <td>
+                                ${s.worstDeviation < 0 
+                                    ? `<strong class="regress">▼ ${s.worstDeviation.toFixed(2)}</strong>` 
+                                    : s.worstDeviation.toFixed(2)
+                                }
+                            </td>
+                            
+                            <td>${s.bestKP}</td>
+                            <td>
+                                ${s.bestDeviation > 0 
+                                    ? `<strong class="progress">▲ ${s.bestDeviation.toFixed(2)}</strong>` 
+                                    : s.bestDeviation.toFixed(2)
+                                }
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    }
+    
+    tableContainer.innerHTML = html;
+}
+
+// =====================================================================
+// [!! NEW !!] 模块十三：班级筛选辅助函数 (Feature 1)
+// =====================================================================
+
+/**
+ * 13.15. [NEW] (Feature 1) 
+ * 填充模块十三的班级筛选器
+ */
+function populateItemClassFilter(allStudents) {
+    const classFilterSelect = document.getElementById('item-class-filter');
+    if (!classFilterSelect) return;
+
+    // 1. 获取当前选中的值 (以便在刷新时保留)
+    const oldValue = classFilterSelect.value;
+    
+    // 2. 从学生列表中提取班级
+    const classes = [...new Set(allStudents.map(s => s.class))].sort();
+
+    // 3. 生成 HTML
+    let html = `<option value="ALL">-- 全体 --</option>`;
+    html += classes.map(c => `<option value="${c}">${c}</option>`).join('');
+
+    classFilterSelect.innerHTML = html;
+    
+    // 4. 尝试恢复旧值
+    if (oldValue && classFilterSelect.querySelector(`option[value="${oldValue}"]`)) {
+        classFilterSelect.value = oldValue;
+    } else {
+        classFilterSelect.value = 'ALL';
+    }
+}
+
+// =====================================================================
+// [!! NEW !!] 模块十三：学生个体-题目详情表 (Feature 7)
+// =====================================================================
+
+/**
+ * 13.16. [MODIFIED] (Feature 7) 
+ * 绘制学生个体-题目详情表
+ * * [!! 修正版 12 !!] - 2025-11-11
+ * - (Feature) 签名变更，接收 questionType。
+ * - (Feature) 根据 questionType 筛选显示的题目列表。
+ * - (Feature) 标题现在会显示筛选类型。
+ */
+function drawItemStudentDetailTable(studentId, studentName, studentLayer, questionType = 'all') {
+    const detailContainer = document.getElementById('item-student-detail-container');
+    if (!detailContainer) return;
+
+    // 1. 获取参数
+    const subjectName = document.getElementById('item-subject-select').value;
+    const selectedClass = document.getElementById('item-class-filter').value;
+    const numGroups = parseInt(document.getElementById('item-layer-groups').value);
+
+    // 2. 获取筛选后的学生
+    const allStudents = G_ItemAnalysisData[subjectName]?.students || [];
+    const filteredStudents = (selectedClass === 'ALL')
+        ? allStudents
+        : allStudents.filter(s => s.class === selectedClass);
+    
+    // 3. 获取学生对象
+    const student = filteredStudents.find(s => String(s.id) === String(studentId));
+    if (!student) {
+        detailContainer.innerHTML = `<p>未找到学生 ${studentName} 的数据。</p>`;
+        return;
+    }
+
+    // 4. [核心] 获取层级平均分 (按题)
+    // [!! 修正 !!] (Feature) 必须传入 questionType，以获取正确的层均分
+    const { groupStats } = calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents, questionType);
+    const layerAvgRates = groupStats[studentLayer];
+    
+    // 5. [核心] 获取题目满分
+    const recalculatedStats = getRecalculatedItemStats(subjectName);
+    const { minorStats, majorStats, minorQuestions, majorQuestions } = recalculatedStats;
+
+    if (!layerAvgRates) {
+        detailContainer.innerHTML = `<p>无法计算 ${studentLayer} 的层级平均数据。</p>`;
+        return;
+    }
+
+    // 6. 遍历所有题目，计算偏差
+    const allQuestionDetails = [];
+
+    // [!! 修正 !!] (Feature) 筛选小题
+    if (questionType === 'all' || questionType === 'minor') {
+        (minorQuestions || []).forEach(qName => {
+            const stat = minorStats[qName];
+            if (!stat) return;
+            
+            const fullScore = stat.manualFullScore || stat.maxScore;
+            const studentScore = student.minorScores[qName];
+            const studentRate = (fullScore > 0 && typeof studentScore === 'number') ? (studentScore / fullScore) : null;
+            const layerRate = layerAvgRates[qName];
+            const deviation = (studentRate !== null && typeof layerRate === 'number') ? (studentRate - layerRate) : null;
+            
+            allQuestionDetails.push({
+                qName: qName,
+                studentScore: studentScore ?? 'N/A',
+                fullScore: fullScore,
+                studentRate: studentRate,
+                layerRate: layerRate,
+                deviation: deviation
+            });
+        });
+    }
+
+    // [!! 修正 !!] (Feature) 筛选大题
+    if (questionType === 'all' || questionType === 'major') {
+        (majorQuestions || []).forEach(qName => {
+            const stat = majorStats[qName];
+            if (!stat) return;
+            
+            const fullScore = stat.manualFullScore || stat.maxScore;
+            const studentScore = student.majorScores[qName];
+            const studentRate = (fullScore > 0 && typeof studentScore === 'number') ? (studentScore / fullScore) : null;
+            const layerRate = layerAvgRates[qName];
+            const deviation = (studentRate !== null && typeof layerRate === 'number') ? (studentRate - layerRate) : null;
+            
+            allQuestionDetails.push({
+                qName: qName,
+                studentScore: studentScore ?? 'N/A',
+                fullScore: fullScore,
+                studentRate: studentRate,
+                layerRate: layerRate,
+                deviation: deviation
+            });
+        });
+    }
+
+    // 7. 按偏差排序 (短板优先)
+    allQuestionDetails.sort((a, b) => {
+        const devA = a.deviation ?? 0;
+        const devB = b.deviation ?? 0;
+        return devA - devB;
+    });
+
+    // 8. 渲染表格
+    // [!! 修正 !!] (Feature) 更新标题
+    const typeText = (questionType === 'minor') ? ' (仅小题)' : (questionType === 'major') ? ' (仅大题)' : ' (全部题目)';
+    detailContainer.innerHTML = `
+        <h4>${studentName} (${studentLayer}层) - 题目详情${typeText} (按短板排序)</h4>
+        <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>题号</th>
+                        <th>学生得分</th>
+                        <th>满分</th>
+                        <th>学生得分率</th>
+                        <th>层均得分率</th>
+                        <th>得分率偏差</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${allQuestionDetails.map(q => `
+                        <tr>
+                            <td><strong>${q.qName}</strong></td>
+                            <td>${q.studentScore}</td>
+                            <td>${q.fullScore}</td>
+                            <td>${q.studentRate !== null ? (q.studentRate * 100).toFixed(1) + '%' : 'N/A'}</td>
+                            <td>${(q.layerRate !== null && q.layerRate !== undefined) ? (q.layerRate * 100).toFixed(1) + '%' : 'N/A'}</td>
+                            <td>
+                                ${(q.deviation !== null && q.deviation !== undefined)
+                                    ? (q.deviation > 0
+                                        ? `<strong class="progress">▲ ${(q.deviation * 100).toFixed(1)}%</strong>`
+                                        : (q.deviation < 0 
+                                            ? `<strong class="regress">▼ ${(q.deviation * 100).toFixed(1)}%</strong>`
+                                            : `0.0%`))
+                                    : 'N/A'
+                                }
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    // (显示)
+    detailContainer.style.display = 'block';
 }
