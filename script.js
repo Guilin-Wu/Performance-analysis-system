@@ -2154,7 +2154,7 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
         <div class="main-card-wrapper">
             <h4 style="margin:0;">总分排名分层流动图 (桑基图)</h4>
             <p style="color: var(--text-muted); font-size: 0.9em; margin-top: 0;">
-                点击图中的“节点”或“流向”可查看学生列表。
+                点击图中的“节点”或“流向”可查看学生列表。(绿色表示向上流动，红色表示向下流动)
             </p>
             <div class="chart-container" id="dist-sankey-chart" style="height: 600px;"></div>
         </div>
@@ -2168,35 +2168,35 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
     // 3. 匹配两个数据源 (包含 oldGradeRank)
     const mergedData = currentData.map(student => {
         const oldStudent = compareData.find(s => String(s.id) === String(student.id));
-        if (!oldStudent) return null; 
-        
+        if (!oldStudent) return null;
+
         return {
             ...student,
             oldTotalScore: oldStudent.totalScore,
             oldRank: oldStudent.rank,
-            oldGradeRank: oldStudent.gradeRank || 0 
+            oldGradeRank: oldStudent.gradeRank || 0
         };
-    }).filter(s => s !== null); 
+    }).filter(s => s !== null);
 
 
     // 4. 绑定直方图事件
     const subjectSelect = document.getElementById('dist-subject-select');
-    
+
     const drawHistogram = () => {
         const subject = subjectSelect.value;
-        const currentScores = (subject === 'totalScore') 
-            ? currentData.map(s => s.totalScore) 
+        const currentScores = (subject === 'totalScore')
+            ? currentData.map(s => s.totalScore)
             : currentData.map(s => s.scores[subject]);
-            
+
         const compareScores = (subject === 'totalScore')
             ? compareData.map(s => s.totalScore)
             : compareData.map(s => s.scores[subject]);
-            
+
         renderOverlappingHistogram('dist-overlap-histogram-chart', currentScores, compareScores, subject);
     };
 
     subjectSelect.addEventListener('change', drawHistogram);
-    
+
     // 5. 将分层逻辑移到此处，以便共享
     const total = currentData.length;
     const rankTiers = [
@@ -2218,7 +2218,7 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
 
     // 6. 初始绘制
     drawHistogram();
-    
+
     // 7. [!!] (修复) 确保
     // (A) 变量定义
     // (B) 查找元素
@@ -2241,7 +2241,7 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
             let tableHtml = '';
 
             const { dataType, data } = params;
-            
+
             // (核心修复) 检查当前是否为年段模式
             const useGradeRank = (currentFilter === 'ALL');
 
@@ -2258,7 +2258,7 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
                     // (修复) 动态选择排名
                     const oldRank = useGradeRank ? (s.oldGradeRank || 0) : s.oldRank;
                     const newRank = useGradeRank ? (s.gradeRank || 0) : s.rank;
-                    
+
                     return oldRank > 0 && newRank > 0 &&
                         getRankCategory(oldRank) === sourceTierName &&
                         getRankCategory(newRank) === targetTierName;
@@ -2295,57 +2295,63 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
 
             } else if (dataType === 'node') {
                 // --- 2. 点击了 "节点" ---
-                title = `${params.name} (${params.value}人)`; 
-                
+                title = `${params.name} (${params.value}人)`;
+
                 const nodeName = data.name.replace('上次: ', '').replace('本次: ', '');
                 const isOld = data.name.startsWith('上次:');
-                
+
                 students = mergedData.filter(s => {
                     // (核心修复) 动态选择排名
-                    const rank = isOld 
+                    const rank = isOld
                         ? (useGradeRank ? (s.oldGradeRank || 0) : s.oldRank)
                         : (useGradeRank ? (s.gradeRank || 0) : s.rank);
                     return rank > 0 && getRankCategory(rank) === nodeName;
                 });
-                
+
                 // (修复) 动态表头
                 const newRankHeader = useGradeRank ? '本次年排' : '本次班排';
                 const oldRankHeader = useGradeRank ? '上次年排' : '上次班排';
 
                 tableHtml = `
-                    <thead>
-                        <tr><th>姓名</th><th>班级</th><th>${newRankHeader}</th><th>${oldRankHeader}</th><th>上次分层</th></tr>
-                    </thead>
-                    <tbody>
-                        ${students.map(s => {
-                            // (修复) 动态选择排名
-                            const oldRank = useGradeRank ? (s.oldGradeRank || 0) : s.oldRank;
-                            const newRank = useGradeRank ? (s.gradeRank || 0) : s.rank;
+                <thead>
+                    <tr>
+                        <th>姓名</th>
+                        <th>班级</th>
+                        <th>${newRankHeader}</th>
+                        <th>${oldRankHeader}</th>
+                        <th>上次分层</th>
+                        <th>本次分层</th> </tr>
+                </thead>
+                <tbody>
+                    ${students.map(s => {
+                    // (修复) 动态选择排名
+                    const oldRank = useGradeRank ? (s.oldGradeRank || 0) : s.oldRank;
+                    const newRank = useGradeRank ? (s.gradeRank || 0) : s.rank;
 
-                            const oldTierName = oldRank > 0 ? getRankCategory(oldRank) : 'N/A';
-                            const newTierName = newRank > 0 ? getRankCategory(newRank) : nodeName;
-                            
-                            const oldIndex = getTierIndex(oldTierName);
-                            const newIndex = getTierIndex(newTierName);
-                            let rowClass = '';
-                            if (oldIndex > newIndex && oldIndex !== -1 && newIndex !== -1) {
-                                rowClass = 'progress'; 
-                            } else if (oldIndex < newIndex && oldIndex !== -1 && newIndex !== -1) {
-                                rowClass = 'regress'; 
-                            }
+                    const oldTierName = oldRank > 0 ? getRankCategory(oldRank) : 'N/A';
+                    const newTierName = newRank > 0 ? getRankCategory(newRank) : nodeName;
 
-                            return `
-                            <tr class="${rowClass}">
-                                <td>${s.name}</td>
-                                <td>${s.class}</td>
-                                <td>${newRank}</td>
-                                <td>${oldRank}</td>
-                                <td>${oldTierName}</td>
-                            </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                `;
+                    const oldIndex = getTierIndex(oldTierName);
+                    const newIndex = getTierIndex(newTierName);
+                    let rowClass = '';
+                    if (oldIndex > newIndex && oldIndex !== -1 && newIndex !== -1) {
+                        rowClass = 'progress';
+                    } else if (oldIndex < newIndex && oldIndex !== -1 && newIndex !== -1) {
+                        rowClass = 'regress';
+                    }
+
+                    return `
+                        <tr class="${rowClass}">
+                            <td>${s.name}</td>
+                            <td>${s.class}</td>
+                            <td>${newRank}</td>
+                            <td>${oldRank}</td>
+                            <td>${oldTierName}</td>
+                            <td>${newTierName}</td> </tr>
+                        `;
+                }).join('')}
+                </tbody>
+            `;
             }
 
             if (students.length > 0) {
@@ -2486,8 +2492,8 @@ function renderCorrelationHeatmap(elementId, activeData) {
             type: 'heatmap',
             data: heatmapData,
             label: {
-                show: true, 
-                formatter: (params) => params.data[2] 
+                show: true,
+                formatter: (params) => params.data[2]
             },
             emphasis: {
                 itemStyle: {
