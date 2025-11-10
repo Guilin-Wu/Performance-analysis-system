@@ -300,7 +300,7 @@ async function handleFileData(event, type) {
         console.error(err);
         label.innerHTML = `❌ 加载失败 (点击重试)`;
         alert(`数据加载失败：\n${err.message}`);
-        event.target.value = null;
+        //event.target.value = null;
     }
 }
 
@@ -5486,7 +5486,8 @@ function renderMultiExamLineChart(elementId, title, examNames, seriesData, yAxis
 
 /**
  * (新增) 11. 启动时从 localStorage 加载数据
- * [!!] (完整修复版)
+ * [!!] (完整修复版 - 2025-11-10) 
+ * [!!] (核心) 修复了从存储加载时, G_DynamicSubjectList 无法更新的 Bug
  */
 function loadDataFromStorage() {
     // 1. 尝试读取已存储的数据
@@ -5500,6 +5501,9 @@ function loadDataFromStorage() {
     // 2. 如果没有“本次成绩”，则什么也不做
     if (!storedData) {
         console.log("未找到本地存储的数据。");
+        // [!!] (修改) 即使没有数据，也要确保“多次考试”模块的科目配置是可用的
+        // (这会运行一次, 使用 DEFAULT_SUBJECT_LIST)
+        initializeSubjectConfigs(); 
         return;
     }
 
@@ -5508,21 +5512,61 @@ function loadDataFromStorage() {
     // 3. 恢复数据到全局变量
     G_StudentsData = JSON.parse(storedData);
 
+    // 4. [!!] (核心修复) 
+    // 根据加载的 G_StudentsData 重建 G_DynamicSubjectList
+    if (G_StudentsData.length > 0) {
+        const allSubjects = new Set();
+        G_StudentsData.forEach(student => {
+            if (student.scores) {
+                // 遍历 scores 对象的所有 key (即所有科目)
+                Object.keys(student.scores).forEach(subject => allSubjects.add(subject));
+            }
+        });
+        
+        if (allSubjects.size > 0) {
+            G_DynamicSubjectList = Array.from(allSubjects);
+        }
+        // (如果 G_StudentsData 有, 但 scores 为空, G_DynamicSubjectList 将保留默认值)
+    }
+
     if (storedCompareData) {
         G_CompareData = JSON.parse(storedCompareData);
     }
 
+    // 5. [!!] (修改) 先加载存储的配置
     if (storedConfigs) {
         G_SubjectConfigs = JSON.parse(storedConfigs);
+    } else {
+        // 如果没有存储的配置，则根据刚生成的 G_DynamicSubjectList 初始化
+        initializeSubjectConfigs();
     }
 
-    // 4. (关键) 运行所有启动程序
+    // 6. [!!] (新增) 健壮性检查：
+    // 确保 G_SubjectConfigs 中包含了所有 G_DynamicSubjectList 中的科目
+    // (这会为 "道德与法治" 这种新科目添加默认配置，以防 G_SubjectConfigs 丢失)
+    G_DynamicSubjectList.forEach(subject => {
+        if (!G_SubjectConfigs[subject]) {
+            console.warn(`未找到科目 ${subject} 的配置, 正在创建默认值。`);
+            const isY_S_W = ['语文', '数学', '英语'].includes(subject);
+            const full = isY_S_W ? 150 : 100;
+            const pass = isY_S_W ? 90 : 60;
+            const excel = isY_S_W ? 120 : 85;
+
+            G_SubjectConfigs[subject] = {
+                full: full,
+                excel: excel,
+                good: (pass + excel) / 2,
+                pass: pass,
+            };
+        }
+    });
+
+    // 7. (不变) 运行所有启动程序
     populateClassFilter(G_StudentsData);
 
     // (解锁) 解锁 UI
     welcomeScreen.style.display = 'none';
 
-    // [!!] (修复) 查找修复后的 'import-compare-btn'
     const compareBtnEl = document.getElementById('import-compare-btn');
     if (compareBtnEl) {
         compareBtnEl.classList.remove('disabled');
@@ -5532,7 +5576,7 @@ function loadDataFromStorage() {
     classFilterContainer.style.display = 'block';
     classFilterHr.style.display = 'block';
 
-    // 5. 恢复上传标签的提示文字
+    // 8. (不变) 恢复上传标签的提示文字
     if (storedMainFile) {
         const mainBtn = document.getElementById('import-main-btn');
         if (mainBtn) {
@@ -5540,14 +5584,12 @@ function loadDataFromStorage() {
         }
     }
     if (storedCompareFile) {
-        // [!!] (修复) 'compareBtnEl' 变量已在上面定义
-        // (这就是 L237 错误发生的地方)
         if (compareBtnEl) {
             compareBtnEl.innerHTML = `✅ ${storedCompareFile} (已加载)`;
         }
     }
 
-    // 6. (运行) 运行分析
+    // 9. (运行) 运行分析
     runAnalysisAndRender();
 }
 
