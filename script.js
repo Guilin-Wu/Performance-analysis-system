@@ -136,7 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
             populateClassFilter(G_StudentsData);
             // 解锁 UI
             welcomeScreen.style.display = 'none';
-            compareUploadLabel.classList.remove('disabled');
+            document.getElementById('import-compare-btn').classList.remove('disabled');
             navLinks.forEach(l => l.classList.remove('disabled'));
             classFilterContainer.style.display = 'block';
             classFilterHr.style.display = 'block';
@@ -2505,7 +2505,20 @@ function renderMultiExam(container) {
         <div id="multi-student-report" style="display: none;">
             <div class="main-card-wrapper" style="margin-bottom: 20px;">
                 <h4 id="multi-student-name-title">学生报表</h4>
-                <div class="dashboard-chart-grid-2x2">
+
+                <div class="main-card-wrapper" style="padding: 15px; margin-top: 10px; box-shadow: var(--shadow-sm);">
+                    <h5>各科成绩曲线 (图1) - 科目筛选</h5>
+                    <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 0; flex-wrap: wrap; gap: 10px;">
+                        <button id="multi-subject-all" class="sidebar-button" style="padding: 5px 10px; font-size: 0.8em;">全选</button>
+                        <button id="multi-subject-none" class="sidebar-button" style="padding: 5px 10px; font-size: 0.8em; background-color: var(--color-gray);">全不选</button>
+                    </div>
+                    <div id="multi-subject-checkboxes" class="multi-subject-filter-container">
+                        </div>
+                </div>
+        <div class="dashboard-chart-grid-1x1" style="margin-top: 20px;">
+            <div class="main-card-wrapper" style="margin-bottom: 20px;">
+                <h4 id="multi-student-name-title">学生报表</h4>
+                <div class="dashboard-chart-grid-1x1">
                     <div class="chart-container" id="multi-exam-score-chart" style="height: 400px;"></div>
                     <div class="chart-container" id="multi-exam-rank-chart" style="height: 400px;"></div>
                 </div>
@@ -2533,7 +2546,7 @@ function renderMultiExam(container) {
 
         try {
             for (const file of files) {
-                const { processedData } = await loadExcelData(file); 
+                const { processedData } = await loadExcelData(file);
                 const rankedData = addSubjectRanksToData(processedData);
 
                 loadedData.push({
@@ -5325,7 +5338,7 @@ function loadDataFromStorage() {
 
     const storedMainFile = localStorage.getItem('G_MainFileName');
     const storedCompareFile = localStorage.getItem('G_CompareFileName');
-    
+
     // 2. 如果没有“本次成绩”，则什么也不做
     if (!storedData) {
         console.log("未找到本地存储的数据。");
@@ -5350,7 +5363,7 @@ function loadDataFromStorage() {
 
     // (解锁) 解锁 UI
     welcomeScreen.style.display = 'none';
-    
+
     // [!!] (修复) 查找修复后的 'import-compare-btn'
     const compareBtnEl = document.getElementById('import-compare-btn');
     if (compareBtnEl) {
@@ -5425,6 +5438,7 @@ function loadMultiExamData() {
 
 /**
  * (重构) 11.5. 初始化“多次考试分析”的学生搜索框
+ * [!!] (已修改) 添加了筛选器的事件监听
  */
 function initializeStudentSearch(multiExamData) {
     const searchInput = document.getElementById('multi-student-search');
@@ -5433,6 +5447,7 @@ function initializeStudentSearch(multiExamData) {
 
     if (!searchInput) return; // (如果不在当前模块, DOM不存在)
 
+    // (计算所有学生列表 - 不变)
     const allStudentsMap = new Map();
     multiExamData.forEach(exam => {
         exam.students.forEach(student => {
@@ -5441,9 +5456,9 @@ function initializeStudentSearch(multiExamData) {
             }
         });
     });
-
     const allStudentsList = Array.from(allStudentsMap, ([id, name]) => ({ id, name }));
 
+    // (搜索框 input 事件 - 不变)
     searchInput.addEventListener('input', (e) => {
         const searchTerm = e.target.value.toLowerCase();
         if (searchTerm.length < 1) {
@@ -5451,7 +5466,6 @@ function initializeStudentSearch(multiExamData) {
             resultsContainer.style.display = 'none';
             return;
         }
-
         const filteredStudents = allStudentsList.filter(s => {
             return String(s.name).toLowerCase().includes(searchTerm) ||
                 String(s.id).toLowerCase().includes(searchTerm);
@@ -5469,6 +5483,7 @@ function initializeStudentSearch(multiExamData) {
         resultsContainer.style.display = 'block';
     });
 
+    // (点击搜索结果 事件 - [!!] 修改)
     resultsContainer.addEventListener('click', (e) => {
         const item = e.target.closest('.result-item');
         if (item && item.dataset.id) {
@@ -5482,23 +5497,62 @@ function initializeStudentSearch(multiExamData) {
             document.getElementById('multi-student-name-title').innerText = `${studentName} 的成绩曲线`;
             reportContainer.style.display = 'block';
 
-            // [!!] (修改) 调用新函数
-            drawMultiExamChartsAndTable(studentId, loadMultiExamData());
+            // [!!] (新增) 存储当前学生ID，以便筛选器使用
+            reportContainer.dataset.studentId = studentId;
+
+            // (调用新函数)
+            drawMultiExamChartsAndTable(studentId, loadMultiExamData(), true); // [!!] true = 强制重绘复选框
         }
     });
 
+    // (点击外部 隐藏 - 不变)
     document.addEventListener('click', (e) => {
         if (searchInput && !searchInput.contains(e.target) && resultsContainer && !resultsContainer.contains(e.target)) {
             resultsContainer.style.display = 'none';
         }
     });
+
+    // [!!] (新增) 绑定筛选器事件
+    const checkboxContainer = document.getElementById('multi-subject-checkboxes');
+    const selectAllBtn = document.getElementById('multi-subject-all');
+    const selectNoneBtn = document.getElementById('multi-subject-none');
+
+    // (辅助函数：重绘图表)
+    const redrawCharts = () => {
+        const currentStudentId = reportContainer.dataset.studentId;
+        if (currentStudentId) {
+            drawMultiExamChartsAndTable(currentStudentId, loadMultiExamData(), false); // [!!] false = 不重绘复选框
+        }
+    };
+
+    // (复选框点击事件 - 委托)
+    if (checkboxContainer) {
+        checkboxContainer.addEventListener('change', redrawCharts);
+    }
+
+    // (全选)
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', () => {
+            checkboxContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+            redrawCharts();
+        });
+    }
+
+    // (全不选)
+    if (selectNoneBtn) {
+        selectNoneBtn.addEventListener('click', () => {
+            checkboxContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+            redrawCharts();
+        });
+    }
 }
 
 
 /**
  * (重构) 11.6. (核心) 绘制多次考试的图表和表格
+ * [!!] (已修改) 添加了复选框填充和数据筛选逻辑
  */
-function drawMultiExamChartsAndTable(studentId, multiExamData) {
+function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCheckboxes = false) {
     // [!!] (重构) X轴标签来自用户定义的 label
     const examNames = multiExamData.map(e => e.label);
 
@@ -5524,19 +5578,17 @@ function drawMultiExamChartsAndTable(studentId, multiExamData) {
         subjectData[subject] = [];
     });
 
-    // 2. 遍历所有考试，填充数据
+    // 2. 遍历所有考试，填充数据 (不变)
     multiExamData.forEach(exam => {
         const student = exam.students.find(s => String(s.id) === String(studentId));
 
         if (student) {
-            // (填充科目分)
             dynamicSubjects.forEach(subject => {
                 subjectData[subject].push(student.scores[subject] || null);
             });
             rankData.classRank.push(student.rank || null);
             rankData.gradeRank.push(student.gradeRank || null);
         } else {
-            // (该生本次考试缺考)
             dynamicSubjects.forEach(subject => {
                 subjectData[subject].push(null);
             });
@@ -5571,11 +5623,30 @@ function drawMultiExamChartsAndTable(studentId, multiExamData) {
         connectNulls: true
     });
 
-    // 4. 绘图 (不变)
-    renderMultiExamLineChart('multi-exam-score-chart', '各科成绩曲线', examNames, scoreSeries, false);
-    renderMultiExamLineChart('multi-exam-rank-chart', '排名变化曲线', examNames, rankSeries, true);
+    // 4. [!!] (新增) 填充复选框
+    const checkboxContainer = document.getElementById('multi-subject-checkboxes');
+    if (checkboxContainer && forceRepopulateCheckboxes) {
+        checkboxContainer.innerHTML = dynamicSubjects.map(subject => `
+            <div>
+                <input type="checkbox" id="multi-cb-${subject}" value="${subject}" checked>
+                <label for="multi-cb-${subject}">${subject}</label>
+            </div>
+        `).join('');
+    }
 
-    // 5. [!!] (新增) 绘制详细数据表格
+    // 5. [!!] (新增) 根据复选框筛选数据
+    const checkedSubjects = new Set();
+    if (checkboxContainer) {
+        checkboxContainer.querySelectorAll('input:checked').forEach(cb => checkedSubjects.add(cb.value));
+    }
+    // (如果一个都没勾选，也按空数组筛选)
+    const filteredScoreSeries = scoreSeries.filter(series => checkedSubjects.has(series.name));
+
+    // 6. 绘图 ( [!!] 修改)
+    renderMultiExamLineChart('multi-exam-score-chart', '各科成绩曲线', examNames, filteredScoreSeries, false); // [!!] 使用过滤后的数据
+    renderMultiExamLineChart('multi-exam-rank-chart', '排名变化曲线', examNames, rankSeries, true); // (排名图不变)
+
+    // 7. [!!] (新增) 绘制详细数据表格 (不变)
     const tableContainer = document.getElementById('multi-student-table-container');
     if (!tableContainer) return;
 

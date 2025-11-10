@@ -698,3 +698,24 @@ td span.regress {
 .multi-exam-table-container h4 {
     margin-top: 0;
 }
+
+
+/* --- (新增) 模块十二：科目筛选器样式 --- */
+.multi-subject-filter-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    max-height: 150px;
+    overflow-y: auto;
+    margin-top: 10px;
+}
+
+/* (新增) 专用于模块十二的 1x1 布局 */
+.dashboard-chart-grid-1x1 {
+    display: grid;
+    grid-template-columns: 1fr; /* 1列 */
+    gap: 20px;
+}
