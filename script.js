@@ -178,18 +178,16 @@ document.addEventListener('DOMContentLoaded', () => {
     navLinks.forEach(link => {
         link.addEventListener('click', (e) => {
             e.preventDefault();
-            if (link.classList.contains('disabled')) {
+
+            // [!!] (修改) 先获取模块名
+            const targetModule = link.getAttribute('data-module');
+
+            // [!!] (修改) 如果不是“多次考试分析”模块，才检查 disabled
+            if (targetModule !== 'multi-exam' && link.classList.contains('disabled')) {
                 alert('请先导入本次成绩数据！');
                 return;
             }
-            const targetModule = link.getAttribute('data-module');
-
-            // 检查对比数据
-            const compareRequiredModules = ['trend', 'trend-distribution'];
-            if (compareRequiredModules.includes(targetModule) && G_CompareData.length === 0) {
-                alert('请先导入 "对比成绩" 数据，才能使用此模块！');
-                return;
-            }
+            // const targetModule = link.getAttribute('data-module'); // (已移到前面)
 
             navLinks.forEach(l => l.classList.remove('active'));
             link.classList.add('active');
@@ -235,7 +233,11 @@ document.addEventListener('DOMContentLoaded', () => {
 function initializeUI() {
     document.getElementById('import-compare-btn').classList.add('disabled');
     navLinks.forEach(link => {
-        if (!link.classList.contains('active')) {
+        // [!!] (修改) 允许“多次考试分析”模块始终可用
+        const module = link.getAttribute('data-module');
+        if (module === 'multi-exam') {
+            link.classList.remove('disabled'); // 确保它绝不被禁用
+        } else if (!link.classList.contains('active')) {
             link.classList.add('disabled');
         }
     });
@@ -682,11 +684,30 @@ function calculateStatsForScores(scores, fullMark, passLine, excellentLine, good
 
 /**
  * (新增) 7.1. 核心分析与渲染触发器
+ * [!!] (已修改) 允许 multi-exam 模块在没有 G_StudentsData 时运行
  */
 function runAnalysisAndRender() {
-    if (G_StudentsData.length === 0) return; // 防止在没数据时运行
+    // 1. [!!] (修改) 先获取当前要渲染的模块
+    const currentModuleLink = document.querySelector('.nav-link.active');
+    // (健壮性检查) 如果没有激活的链接，则退出
+    if (!currentModuleLink) return;
+    const currentModule = currentModuleLink.dataset.module;
 
-    // 1. (新增) 根据班级筛选
+    // 2. [!!] (修改) 如果是“多次考试分析”，则特殊处理
+    if (currentModule === 'multi-exam') {
+        // 这个模块不依赖 G_StudentsData，直接渲染
+        // (renderModule 会自动找到正确的 container 并调用 renderMultiExam)
+        renderModule(currentModule, [], []);
+        return; // [!!] (重要) 渲染后立即退出，跳过后续所有逻辑
+    }
+
+    // 3. [!!] (原第1行) 对所有其他模块，执行数据检查
+    if (G_StudentsData.length === 0) {
+        console.warn("runAnalysisAndRender: G_StudentsData 为空，已退出。");
+        return;
+    }
+
+    // 4. (新增) 根据班级筛选
     const currentFilter = classFilterSelect.value;
     let activeData = G_StudentsData;
     let activeCompareData = G_CompareData;
@@ -699,14 +720,14 @@ function runAnalysisAndRender() {
         }
     }
 
-    // 2. (重构) 重新计算统计数据
+    // 5. (重构) 重新计算统计数据
     G_Statistics = calculateAllStatistics(activeData);
     if (activeCompareData.length > 0) {
         G_CompareStatistics = calculateAllStatistics(activeCompareData);
     }
 
-    // 3. (重构) 渲染当前激活的模块
-    const currentModule = document.querySelector('.nav-link.active').dataset.module;
+    // 6. (重构) 渲染当前激活的模块
+    // (currentModule 已在最前面获取)
     renderModule(currentModule, activeData, activeCompareData);
 }
 
