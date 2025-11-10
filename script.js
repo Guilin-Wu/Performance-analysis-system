@@ -904,7 +904,7 @@ function renderDashboard(container, stats, activeData) {
     drawHistogram();
     drawClassCompareChart();
     renderAverageRadar('radar-chart', stats);
-    renderSubjectBoxPlot('subject-boxplot-chart', G_Statistics);
+    renderSubjectBoxPlot('subject-boxplot-chart', G_Statistics, activeData); // [!!] (新增) 传入 activeData
     renderStackedBar('stacked-bar-chart', G_Statistics, G_SubjectConfigs);
     drawScatterPlot();
 }
@@ -1797,7 +1797,7 @@ function renderBoundary(container, activeData, stats) {
     container.innerHTML = `
         <h2>模块五：临界生分析 (当前筛选: ${G_CurrentClassFilter})</h2>
         <p style="margin-top: -20px; margin-bottom: 20px; color: var(--text-muted);">
-            快速定位“差一点”就能上一个台阶的学生。
+            快速定位“差一点”就能上一个台阶的学生。(单击学生姓名可以快速查看学生各科分数！)
         </p>
 
         <div class="main-card-wrapper" style="margin-bottom: 20px;">
@@ -2885,28 +2885,89 @@ function renderClassComparisonChart(elementId, data, title) {
 }
 
 /**
- * (新增) 10.5. 渲染多科目箱形图
- * (依赖: echarts/dist/extension/dataTool.min.js)
+ * (已修改) 10.5. 渲染多科目箱形图
+ * [!!] (重构) 手动计算箱形图数据，以便在异常值中显示学生姓名
+ * @param {string} elementId
+ * @param {Object} stats - G_Statistics
+ * @param {Array} activeData - 传入学生数据
  */
-function renderSubjectBoxPlot(elementId, stats) {
+function renderSubjectBoxPlot(elementId, stats, activeData) {
     const chartDom = document.getElementById(elementId);
     if (!chartDom) return;
 
     if (echartsInstances[elementId]) echartsInstances[elementId].dispose();
     echartsInstances[elementId] = echarts.init(chartDom);
 
-    // 1. 准备 ECharts dataTool 需要的数据
-    // 格式: [ [subj1_score1, subj1_score2, ...], [subj2_score1, subj2_score2, ...] ]
-    const allScores = G_DynamicSubjectList.map(subject => {
-        return stats[subject] ? stats[subject].scores : [];
+    // 1. [!!] (新增) 辅助函数：手动计算分位数
+    const getQuartiles = (scores) => {
+        if (!scores || scores.length === 0) return { q1: 0, q2: 0, q3: 0 };
+        // (注意) stats.scores 已经是排好序的
+        const n = scores.length;
+        const q1Index = Math.floor(n * 0.25);
+        const q2Index = Math.floor(n * 0.5);
+        const q3Index = Math.floor(n * 0.75);
+        return {
+            q1: scores[q1Index],
+            q2: scores[q2Index], // 中位数
+            q3: scores[q3Index]
+        };
+    };
+
+    const boxData = [];    // 存储箱体数据
+    const scatterData = []; // 存储异常值数据 (带姓名)
+    const labels = G_DynamicSubjectList;
+
+    // 2. [!!] (重构) 遍历所有科目
+    labels.forEach((subject, subjectIndex) => {
+        const s = stats[subject];
+        // (如果该科目没有数据，跳过)
+        if (!s || !s.scores || s.scores.length === 0) return;
+
+        // 2.1 计算四分位数和 IQR (箱体)
+        const { q1, q2, q3 } = getQuartiles(s.scores);
+        const iqr = q3 - q1;
+
+        // 2.2 计算上下限 (胡须)
+        const lowerWhiskerLimit = q1 - 1.5 * iqr;
+        const upperWhiskerLimit = q3 + 1.5 * iqr;
+
+        // 2.3 找到胡须的实际位置 (在限制内的真实 min/max)
+        let actualMin = Infinity;
+        let actualMax = -Infinity;
+        s.scores.forEach(score => {
+            if (score >= lowerWhiskerLimit && score < actualMin) actualMin = score;
+            if (score <= upperWhiskerLimit && score > actualMax) actualMax = score;
+        });
+        // (处理极端情况，如果所有值都是异常值)
+        if (actualMin === Infinity) actualMin = q1;
+        if (actualMax === -Infinity) actualMax = q3;
+
+        // 2.4 添加箱体数据
+        // ECharts 格式: [min, q1, q2, q3, max]
+        boxData.push([actualMin, q1, q2, q3, actualMax]);
+
+        // 2.5 (核心) 遍历 activeData 查找异常值学生
+        activeData.forEach(student => {
+            const score = student.scores[subject];
+            if (score !== null && score !== undefined) {
+                // (如果分数在胡须之外，则为异常值)
+                if (score > upperWhiskerLimit || score < lowerWhiskerLimit) {
+                    scatterData.push({
+                        name: `${student.name} (${student.class})`, // [!!] (新增) 存储学生信息
+                        value: [subjectIndex, score] // [X轴索引, Y轴分数]
+                    });
+                }
+            }
+        });
     });
 
-    // 2. 使用 dataTool 计算 (index.html 中已引入 dataTool.min.js)
-    const boxplotData = echarts.dataTool.prepareBoxplotData(allScores);
+    // 3. [!!] (删除) 移除 dataTool
+    // const allScores = ...
+    // const boxplotData = echarts.dataTool.prepareBoxplotData(allScores);
 
+    // 4. (重构) ECharts 配置
     const option = {
         title: {
-            // text: '各科分数分布 (箱形图)', (已在HTML中添加)
             left: 'center',
             textStyle: { fontSize: 16, fontWeight: 'normal' }
         },
@@ -2917,7 +2978,7 @@ function renderSubjectBoxPlot(elementId, stats) {
         grid: { left: '10%', right: '5%', bottom: '15%' },
         xAxis: {
             type: 'category',
-            data: G_DynamicSubjectList,
+            data: labels, // [!!] (修改)
             boundaryGap: true,
             nameGap: 30,
             axisLabel: { rotate: 30 }
@@ -2931,17 +2992,17 @@ function renderSubjectBoxPlot(elementId, stats) {
             {
                 name: '箱形图',
                 type: 'boxplot',
-                data: boxplotData.boxData,
+                data: boxData, // [!!] (修改)
                 tooltip: {
                     formatter: function (param) {
-                        // param.data[0] 是 xAxis 索引
+                        // param.data[0] 是 xAxis 索引, param.data[1-5] 是 [min, q1, q2, q3, max]
                         return [
-                            '<strong>' + G_DynamicSubjectList[param.data[0]] + '</strong>',
-                            '最大值: ' + param.data[5],
+                            '<strong>' + labels[param.dataIndex] + '</strong>',
+                            '最大值 (上须): ' + param.data[5],
                             '上四分位 (Q3): ' + param.data[4],
                             '中位数 (Q2): ' + param.data[3],
                             '下四分位 (Q1): ' + param.data[2],
-                            '最小值: ' + param.data[1]
+                            '最小值 (下须): ' + param.data[1]
                         ].join('<br/>');
                     }
                 }
@@ -2949,7 +3010,15 @@ function renderSubjectBoxPlot(elementId, stats) {
             {
                 name: '异常值',
                 type: 'scatter',
-                data: boxplotData.outliers
+                data: scatterData, // [!!] (修改)
+                // [!!] (新增) 为异常值定制 Tooltip
+                tooltip: {
+                    formatter: function (param) {
+                        // param.data 是 { name: '...', value: [...] }
+                        return `<strong>${param.data.name}</strong><br/>` +
+                               `${labels[param.data.value[0]]}: <strong>${param.data.value[1]}</strong>分`;
+                    }
+                }
             }
         ],
         toolbox: {
@@ -2961,7 +3030,6 @@ function renderSubjectBoxPlot(elementId, stats) {
     };
     echartsInstances[elementId].setOption(option);
 }
-
 /**
  * (已修改) 10.6. 渲染学科关联性散点图
  * [!!] (重构) 现在调用 calculateCorrelation() 辅助函数
@@ -4406,16 +4474,27 @@ function renderRankingSankey(elementId, mergedData, totalStudents) {
 
 /**
  * (新增) 10.24. 渲染临界生模块 - 单个学生科目详情
+ * [!!] (已修改) - 不及格科目和分数均标红
  */
 function renderBoundaryStudentDetail(containerElement, student) {
 
     // (从 G_DynamicSubjectList 构建科目数据)
     const subjectData = G_DynamicSubjectList.map(subject => {
+
+        const score = student.scores[subject];
+        const config = G_SubjectConfigs[subject];
+        let scoreClass = '';
+
+        if (config && typeof score === 'number' && score < config.pass) {
+            scoreClass = 'regress'; //
+        }
+
         return {
             name: subject,
-            score: student.scores[subject] || 'N/A',
+            score: score || 'N/A',
             classRank: (student.classRanks && student.classRanks[subject]) ? student.classRanks[subject] : 'N/A',
-            gradeRank: (student.gradeRanks && student.gradeRanks[subject]) ? student.gradeRanks[subject] : 'N/A'
+            gradeRank: (student.gradeRanks && student.gradeRanks[subject]) ? student.gradeRanks[subject] : 'N/A',
+            scoreClass: scoreClass 
         };
     });
 
@@ -4434,8 +4513,8 @@ function renderBoundaryStudentDetail(containerElement, student) {
                 <tbody>
                     ${subjectData.map(item => `
                         <tr>
-                            <td><strong>${item.name}</strong></td>
-                            <td>${item.score}</td>
+                            <td class="${item.scoreClass}"><strong>${item.name}</strong></td>
+                            <td class="${item.scoreClass}"><strong>${item.score}</strong></td>
                             <td>${item.classRank}</td>
                             <td>${item.gradeRank}</td>
                         </tr>
