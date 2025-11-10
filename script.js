@@ -736,6 +736,9 @@ function runAnalysisAndRender() {
  * [!!] 已新增 case 'weakness'
  */
 function renderModule(moduleName, activeData, activeCompareData) {
+    // [!!] (新增) 渲染任何模块时，都自动隐藏欢迎屏幕
+    if (welcomeScreen) welcomeScreen.style.display = 'none';
+
     modulePanels.forEach(p => p.style.display = 'none');
     const container = document.getElementById(`module-${moduleName}`);
     if (!container) return;
