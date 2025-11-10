@@ -131,6 +131,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (G_CurrentImportType === 'main') {
             G_StudentsData = selectedExam.students;
+
+            // [!!] (核心修复) 
+            // 导入时, 必须根据这份数据重建 G_DynamicSubjectList
+            // (这段逻辑复制自 loadDataFromStorage)
+            if (G_StudentsData.length > 0) {
+                const allSubjects = new Set();
+                G_StudentsData.forEach(student => {
+                    if (student.scores) {
+                        Object.keys(student.scores).forEach(subject => allSubjects.add(subject));
+                    }
+                });
+                
+                if (allSubjects.size > 0) {
+                    G_DynamicSubjectList = Array.from(allSubjects);
+                }
+            }
+            
+            // [!!] (核心修复) 
+            // 导入时, 必须重新初始化科目配置
+            // (会保留 localStorage 中的配置, 并为新科目添加默认值)
+            const storedConfigs = localStorage.getItem('G_SubjectConfigs');
+            if (storedConfigs) {
+                G_SubjectConfigs = JSON.parse(storedConfigs);
+            } else {
+                G_SubjectConfigs = {}; // 如果没有, 确保是空对象
+            }
+
+            // (为新科目添加默认配置)
+            G_DynamicSubjectList.forEach(subject => {
+                if (!G_SubjectConfigs[subject]) {
+                    const isY_S_W = ['语文', '数学', '英语'].includes(subject);
+                    const full = isY_S_W ? 150 : 100;
+                    const pass = isY_S_W ? 90 : 60;
+                    const excel = isY_S_W ? 120 : 85;
+
+                    G_SubjectConfigs[subject] = {
+                        full: full,
+                        excel: excel,
+                        good: (pass + excel) / 2,
+                        pass: pass,
+                    };
+                }
+            });
+
             localStorage.setItem('G_StudentsData', JSON.stringify(G_StudentsData));
             localStorage.setItem('G_MainFileName', selectedExam.label);
 
