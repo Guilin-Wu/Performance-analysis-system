@@ -154,12 +154,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         Object.keys(student.scores).forEach(subject => allSubjects.add(subject));
                     }
                 });
-                
+
                 if (allSubjects.size > 0) {
                     G_DynamicSubjectList = Array.from(allSubjects);
                 }
             }
-            
+
             // [!!] (核心修复) 
             // 导入时, 必须重新初始化科目配置
             // (会保留 localStorage 中的配置, 并为新科目添加默认值)
@@ -237,7 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (G_CurrentClassFilter !== 'ALL') {
             studentsToPrint = G_StudentsData.filter(s => s.class === G_CurrentClassFilter);
         }
-        
+
         // 2. 提取他们的 ID
         const studentIds = studentsToPrint.map(s => s.id);
         if (studentIds.length > 0) {
@@ -499,8 +499,8 @@ function loadExcelData(file) {
                     // (Case 2: 一级表头 - key="语文")
                     // (我们排除所有已知的非科目关键字)
                     else if (key !== "" &&
-                             !["自定义考号", "姓名", "班级", "班次", "校次", "得分", "准考证号", "学生属性","序号","校次进退步","班次进退步"].includes(key) && // [!!] (修改) 在这里添加 "准考证号"
-                             !key.includes("总分")) {
+                        !["自定义考号", "姓名", "班级", "班次", "校次", "得分", "准考证号", "学生属性", "序号", "校次进退步", "班次进退步"].includes(key) && // [!!] (修改) 在这里添加 "准考证号"
+                        !key.includes("总分")) {
                         // (此时 subjectHeader 可能是空的, key 是 "语文")
                         const subjectName = key;
                         colMap[i] = `scores.${subjectName}`;
@@ -550,8 +550,8 @@ function loadExcelData(file) {
                         }
                     }
 
-// [!!] (修改) 自动计算总分 (始终覆盖)
-                // if (student.totalScore === undefined || student.totalScore === null) { // <-- 删除这一行
+                    // [!!] (修改) 自动计算总分 (始终覆盖)
+                    // if (student.totalScore === undefined || student.totalScore === null) { // <-- 删除这一行
                     let calculatedTotal = 0;
                     let hasValidScores = false;
 
@@ -563,7 +563,7 @@ function loadExcelData(file) {
                         }
                     }
                     student.totalScore = hasValidScores ? parseFloat(calculatedTotal.toFixed(2)) : null;
-                // } // <-- 删除这一行
+                    // } // <-- 删除这一行
 
                     // [!!] (新增) ID回退
                     if (!student.id && student.name) {
@@ -785,7 +785,7 @@ function runAnalysisAndRender() {
     // 2. [!!] (修改) 如果是“多次考试分析”或“小题分析”，则特殊处理
     if (currentModule === 'multi-exam') {
         renderModule(currentModule, [], []);
-        return; 
+        return;
     }
     // [!! NEW !!]
     if (currentModule === 'item-analysis') {
@@ -877,7 +877,7 @@ function renderModule(moduleName, activeData, activeCompareData) {
         case 'weakness':
             renderWeakness(container, activeData, G_Statistics); // [!!] (新增) 传入 G_Statistics
             break;
-            //小题分析
+        //小题分析
         case 'item-analysis':
             renderItemAnalysis(container);
             break;
@@ -1200,7 +1200,7 @@ function renderStudent(container, students, stats) {
     const searchInput = document.getElementById('student-search');
     const resultsContainer = document.getElementById('student-search-results');
     const contentEl = document.getElementById('student-report-content');
-    
+
     // [!! NEW (Print Feature) !!] 绑定打印按钮
     const openPrintModalBtn = document.getElementById('open-print-modal-btn');
     const printModal = document.getElementById('print-modal');
@@ -1220,11 +1220,11 @@ function renderStudent(container, students, stats) {
             printBtnCurrent.dataset.studentId = '';
             printBtnCurrent.disabled = true;
         }
-        
+
         // 2. 更新“打印筛选”按钮的状态
         const filterText = (G_CurrentClassFilter === 'ALL') ? '全体年段' : G_CurrentClassFilter;
         printBtnFilter.innerHTML = `🖨️ 打印当前筛选 (${filterText})`;
-        
+
         // 3. 打开模态框
         printModal.style.display = 'flex';
     });
@@ -1304,7 +1304,7 @@ function renderStudent(container, students, stats) {
 
                                 ${G_DynamicSubjectList.map(subject => {
             let subjectScoreDiff = 'N/A';
-            let subjectClassRankDiff = 'N/A'; 
+            let subjectClassRankDiff = 'N/A';
             let subjectGradeRankDiff = 'N/A';
 
             if (oldStudent && oldStudent.scores) {
@@ -2816,7 +2816,15 @@ function renderMultiExam(container) {
 
         if (index === -1) return;
 
-        if (role === 'delete') {
+        if (role === 'toggle-hide') {
+            // [!! 新增 !!]
+            data[index].isHidden = !data[index].isHidden; // 切换状态
+
+            // (隐藏学生报告，因为数据源已更改)
+            document.getElementById('multi-student-report').style.display = 'none';
+
+        } else if (role === 'delete') {
+            // (这是原来的 'delete' 逻辑)
             data.splice(index, 1);
         } else if (role === 'up' && index > 0) {
             [data[index - 1], data[index]] = [data[index], data[index - 1]]; // (交换)
@@ -5634,7 +5642,7 @@ function loadDataFromStorage() {
         console.log("未找到本地存储的数据。");
         // [!!] (修改) 即使没有数据，也要确保“多次考试”模块的科目配置是可用的
         // (这会运行一次, 使用 DEFAULT_SUBJECT_LIST)
-        initializeSubjectConfigs(); 
+        initializeSubjectConfigs();
         return;
     }
 
@@ -5653,7 +5661,7 @@ function loadDataFromStorage() {
                 Object.keys(student.scores).forEach(subject => allSubjects.add(subject));
             }
         });
-        
+
         if (allSubjects.size > 0) {
             G_DynamicSubjectList = Array.from(allSubjects);
         }
@@ -5738,12 +5746,17 @@ function renderMultiExamList(multiExamData) {
 
     listContainer.innerHTML = multiExamData.map((item, index) => {
         return `
-            <li class="multi-exam-item" data-id="${item.id}">
+            <li class="multi-exam-item ${item.isHidden ? 'is-hidden' : ''}" data-id="${item.id}">
                 <span class="multi-exam-index">${index + 1}.</span>
                 <input type="text" value="${item.label}" data-role="label" class="multi-exam-label" title="点击可重命名: ${item.originalName}">
-                <div class="multi-exam-buttons">
+                    <div class="multi-exam-buttons">
                     <button data-role="up" ${index === 0 ? 'disabled' : ''}>▲</button>
                     <button data-role="down" ${index === multiExamData.length - 1 ? 'disabled' : ''}>▼</button>
+                    
+                    <button data-role="toggle-hide" class="hide-btn" title="${item.isHidden ? '点击设为可见' : '点击设为隐藏'}">
+                        ${item.isHidden ? '🚫' : '👁️'}
+                    </button>
+                    
                     <button data-role="delete" class="delete-btn">×</button>
                 </div>
             </li>
@@ -5763,7 +5776,14 @@ function saveMultiExamData(data) {
  */
 function loadMultiExamData() {
     const storedData = localStorage.getItem('G_MultiExamData');
-    return storedData ? JSON.parse(storedData) : [];
+    const data = storedData ? JSON.parse(storedData) : [];
+
+    // [!! 新增 !!] 
+    // 迁移旧数据：确保每个条目都有 isHidden 属性
+    return data.map(item => ({
+        ...item,
+        isHidden: item.isHidden || false // 如果 item.isHidden 不存在，则默认为 false
+    }));
 }
 
 
@@ -5780,7 +5800,7 @@ function initializeStudentSearch(multiExamData) {
 
     // (计算所有学生列表 - 不变)
     const allStudentsMap = new Map();
-    multiExamData.forEach(exam => {
+    multiExamData.filter(e => !e.isHidden).forEach(exam => {
         exam.students.forEach(student => {
             if (!allStudentsMap.has(student.id)) {
                 allStudentsMap.set(student.id, student.name);
@@ -5885,7 +5905,9 @@ function initializeStudentSearch(multiExamData) {
  */
 function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCheckboxes = false) {
     // [!!] (重构) X轴标签来自用户定义的 label
-    const examNames = multiExamData.map(e => e.label);
+    const visibleExamData = multiExamData.filter(e => !e.isHidden);
+
+    const examNames = visibleExamData.map(e => e.label);
 
     const rankSeries = [];
     const scoreSeries = [];
@@ -5898,7 +5920,7 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
 
     // 1. (重构) 动态初始化科目列表 (基于所有考试的并集)
     const allSubjects = new Set();
-    multiExamData.forEach(exam => {
+    visibleExamData.forEach(exam => {
         exam.students.forEach(s => {
             Object.keys(s.scores).forEach(subject => allSubjects.add(subject));
         });
@@ -5910,7 +5932,7 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
     });
 
     // 2. 遍历所有考试，填充数据 (不变)
-    multiExamData.forEach(exam => {
+    visibleExamData.forEach(exam => {
         const student = exam.students.find(s => String(s.id) === String(studentId));
 
         if (student) {
@@ -6025,7 +6047,8 @@ function openImportModal() {
     // 2. 填充下拉框
     if (multiData.length > 0) {
         importModalSelect.innerHTML = multiData.map(exam => {
-            return `<option value="${exam.id}">${exam.label} (原始: ${exam.originalName})</option>`;
+            const label = `${exam.label} ${exam.isHidden ? '(已隐藏)' : ''}`;
+            return `<option value="${exam.id}">${label} (原始: ${exam.originalName})</option>`;
         }).join('');
         importModalSelect.disabled = false;
         importModalFromStorageBtn.disabled = false;
@@ -6209,7 +6232,7 @@ function renderItemAnalysis(container) {
     const detailTableContainer = document.getElementById('item-student-detail-container');
     const scatterQSelect = document.getElementById('item-scatter-question-select'); // [!! NEW !!]
 
-    
+
     // 3. 辅助函数来填充UI (不变)
     const populateItemAnalysisUI = (itemData) => {
         const subjects = Object.keys(itemData);
@@ -6222,8 +6245,8 @@ function renderItemAnalysis(container) {
         document.getElementById('item-analysis-results').style.display = 'block';
         configBtn.style.display = 'inline-block';
         subjectSelect.innerHTML = subjects.map(s => `<option value="${s}">${s}</option>`).join('');
-        
-        renderItemAnalysisCharts(); 
+
+        renderItemAnalysisCharts();
     };
 
     // 4. 绑定文件上传事件 (不变)
@@ -6233,7 +6256,7 @@ function renderItemAnalysis(container) {
         statusLabel.innerText = `🔄 正在解析 ${file.name}...`;
         try {
             const itemData = await loadItemAnalysisExcel(file);
-            G_ItemAnalysisData = itemData; 
+            G_ItemAnalysisData = itemData;
             localStorage.setItem('G_ItemAnalysisData', JSON.stringify(itemData));
             const subjects = Object.keys(itemData);
             if (subjects.length === 0) {
@@ -6247,7 +6270,7 @@ function renderItemAnalysis(container) {
             alert(`解析失败: ${err.message}`);
         }
     });
-    
+
     // 5. 绑定下拉框切换事件 (主触发器) (不变)
     subjectSelect.addEventListener('change', () => {
         classFilter.value = 'ALL';
@@ -6258,7 +6281,7 @@ function renderItemAnalysis(container) {
         outlierSortSelect.value = 'weakness';
         outlierSearch.value = '';
         // scatterQSelect 会在 renderItemAnalysisCharts 中被自动填充和重绘
-        renderItemAnalysisCharts(); 
+        renderItemAnalysisCharts();
     });
 
     // [!! 修正 !!] 班级筛选器 (主触发器)
@@ -6313,7 +6336,7 @@ function renderItemAnalysis(container) {
     // 9. 绑定 *详情表* 表头点击事件 (不变)
     detailTableContainer.addEventListener('click', (e) => {
         const th = e.target.closest('th[data-sort-key]');
-        if (!th) return; 
+        if (!th) return;
 
         const newKey = th.dataset.sortKey;
         const { key, direction } = G_ItemDetailSort;
@@ -6362,11 +6385,11 @@ function renderItemAnalysis(container) {
         if (storedConfig) {
             G_ItemAnalysisConfig = JSON.parse(storedConfig);
         }
-        
+
         const storedData = localStorage.getItem('G_ItemAnalysisData');
         if (storedData) {
             const itemData = JSON.parse(storedData);
-            G_ItemAnalysisData = itemData; 
+            G_ItemAnalysisData = itemData;
             statusLabel.innerText = "✅ 已从浏览器缓存加载数据。";
             populateItemAnalysisUI(itemData);
         } else {
@@ -6396,28 +6419,28 @@ function loadItemAnalysisExcel(file) {
                 const qScores = [];
                 const tScores = [];
                 processedData.forEach(s => {
-                    const qScore = s[scoreType][qName]; 
+                    const qScore = s[scoreType][qName];
                     const tScore = s.totalScore;
                     if (typeof qScore === 'number' && !isNaN(qScore) && typeof tScore === 'number' && !isNaN(tScore)) {
                         qScores.push(qScore);
                         tScores.push(tScore);
                     }
                 });
-                if (qScores.length === 0) continue; 
+                if (qScores.length === 0) continue;
                 const qAvg = qScores.reduce((a, b) => a + b, 0) / qScores.length;
                 const maxQScore = Math.max(...qScores);
                 const qDifficulty = (maxQScore > 0) ? (qAvg / maxQScore) : 0;
                 const qDiscrimination = calculateCorrelation(qScores, tScores);
                 stats[qName] = {
                     avg: parseFloat(qAvg.toFixed(2)),
-                    maxScore: maxQScore, 
+                    maxScore: maxQScore,
                     difficulty: parseFloat(qDifficulty.toFixed(2)),
                     discrimination: parseFloat(qDiscrimination.toFixed(3))
                 };
             }
             return stats;
         };
-        
+
         // --- FileReader 开始 ---
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -6429,7 +6452,7 @@ function loadItemAnalysisExcel(file) {
                 for (const sheetName of workbook.SheetNames) {
                     const worksheet = workbook.Sheets[sheetName];
                     const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-                    
+
                     if (rawData.length < 5) { // (至少1表头 + 1数据 + 3统计行)
                         console.warn(`工作表 "${sheetName}" 数据行数不足，已跳过。`);
                         continue;
@@ -6470,7 +6493,7 @@ function loadItemAnalysisExcel(file) {
                             continue;
                         }
                         const knownInfoCols = ["学校", "班级排名", "年级排名", "准考证号", "学生属性", "班次", "校次", "客观题", "主观题", "教师", "阅卷班级", "校次进退步", "班次进退步"];
-                        
+
                         if (foundTotalScore && !knownInfoCols.includes(key)) {
                             const qName = String(key);
                             if (isMinorQuestion.test(qName)) {
@@ -6487,7 +6510,7 @@ function loadItemAnalysisExcel(file) {
                     // [!! 修正 !!] (Bug) 移除最后三行 (非学生数据)
                     const studentRows = rawData.slice(studentDataStartRow, -3);
                     const processedData = [];
-                    
+
                     for (const row of studentRows) {
                         const student = { minorScores: {}, majorScores: {} };
                         let hasName = false;
@@ -6512,21 +6535,21 @@ function loadItemAnalysisExcel(file) {
                             }
                         }
                         if (!student.id && student.name) student.id = student.name;
-                        
+
                         // [!! 修正 !!] 确保学生有姓名 和 有效的总分
                         if (student.id && hasName && student.totalScore !== null) {
                             processedData.push(student);
                         }
                     }
-                    
+
                     if (processedData.length === 0) {
                         console.warn(`工作表 "${sheetName}" 解析完成，但未找到有效学生数据。`);
                         continue;
                     }
-                    
+
                     const minorQuestionStats = _calculateQuestionStats(minorQuestionColumns, 'minorScores', processedData);
                     const majorQuestionStats = _calculateQuestionStats(majorQuestionColumns, 'majorScores', processedData);
-                    
+
                     allResults[sheetName] = {
                         students: processedData,
                         minorQuestions: minorQuestionColumns,
@@ -6556,11 +6579,11 @@ function loadItemAnalysisExcel(file) {
 function renderItemAnalysisCharts() {
     const selectedSubject = document.getElementById('item-subject-select').value;
     const selectedClass = document.getElementById('item-class-filter').value;
-    
+
     const detailContainer = document.getElementById('item-student-detail-container');
     if (detailContainer) detailContainer.style.display = 'none';
-    G_ItemDetailSort = { key: 'deviation', direction: 'asc' }; 
-    
+    G_ItemDetailSort = { key: 'deviation', direction: 'asc' };
+
     if (!G_ItemAnalysisData || !G_ItemAnalysisData[selectedSubject]) {
         // ... (错误处理) ...
         document.getElementById('item-chart-minor').innerHTML = "";
@@ -6582,7 +6605,7 @@ function renderItemAnalysisCharts() {
     const filteredStudents = (selectedClass === 'ALL')
         ? allStudents
         : allStudents.filter(s => s.class === selectedClass);
-    
+
     // 3. (不变) 计算和渲染KPIs
     const kpiContainer = document.getElementById('item-kpi-grid');
     const validStudents = filteredStudents.filter(s => typeof s.totalScore === 'number' && !isNaN(s.totalScore));
@@ -6596,7 +6619,7 @@ function renderItemAnalysisCharts() {
         avgTotal = studentScores.reduce((a, b) => a + b, 0) / studentScores.length;
         maxTotal = Math.max(...studentScores);
         minTotal = Math.min(...studentScores);
-        
+
         if (studentScores.length > 1) {
             const variance = studentScores.reduce((acc, score) => acc + Math.pow(score - avgTotal, 2), 0) / studentScores.length;
             stdDev = Math.sqrt(variance);
@@ -6607,7 +6630,7 @@ function renderItemAnalysisCharts() {
     let fullScore = 0;
     let totalDiscrimination = 0;
     let questionCount = 0;
-    
+
     // (计算小题满分)
     if (recalculatedStats.minorStats) {
         for (const qName in recalculatedStats.minorStats) {
@@ -6632,7 +6655,7 @@ function renderItemAnalysisCharts() {
     };
     processDiscrimination(recalculatedStats.minorStats);
     processDiscrimination(recalculatedStats.majorStats);
-    
+
     fullScore = parseFloat(fullScore.toFixed(1));
     const testDifficulty = (fullScore > 0) ? (avgTotal / fullScore) : 0;
     const avgDiscrimination = (questionCount > 0) ? (totalDiscrimination / questionCount) : 0;
@@ -6656,7 +6679,7 @@ function renderItemAnalysisCharts() {
     const qNamesMajor = data.majorQuestions || [];
     const qNamesMinor = data.minorQuestions || [];
     const allQNames = [...qNamesMajor, ...qNamesMinor]; // (大题在前)
-    
+
     scatterQSelect.innerHTML = allQNames.map(qName => `<option value="${qName}">${qName}</option>`).join('');
 
 
@@ -6668,7 +6691,7 @@ function renderItemAnalysisCharts() {
         drawItemAnalysisKnowledgeChart();
         drawItemAnalysisOutlierTable();
         drawItemScatterQuadrantChart(); // [!! NEW !!]
-    }, 0); 
+    }, 0);
 }
 
 /**
@@ -6717,7 +6740,7 @@ function renderItemAnalysisBarChart(elementId, title, qNames, data, yAxisRange) 
             data: qNames,
             name: '题号', // [!!] 修正错字
             axisLabel: {
-                interval: 'auto', 
+                interval: 'auto',
                 rotate: 30
             }
         },
@@ -6731,7 +6754,7 @@ function renderItemAnalysisBarChart(elementId, title, qNames, data, yAxisRange) 
                 type: 'slider',
                 xAxisIndex: [0],
                 start: 0,
-                end: endPercent, 
+                end: endPercent,
                 bottom: 10,
                 height: 20
             },
@@ -6772,11 +6795,11 @@ function getRecalculatedItemStats(subjectName) {
     if (!G_ItemAnalysisData || !G_ItemAnalysisData[subjectName]) {
         return { minorStats: {}, majorStats: {}, minorQuestions: [], majorQuestions: [] };
     }
-    
+
     // 1. 获取原始数据和配置
     const rawData = G_ItemAnalysisData[subjectName];
     const config = G_ItemAnalysisConfig[subjectName] || {};
-    
+
     // 2. 创建新的统计对象
     const newMinorStats = {};
     const newMajorStats = {};
@@ -6785,16 +6808,16 @@ function getRecalculatedItemStats(subjectName) {
     (rawData.minorQuestions || []).forEach(qName => {
         const rawStat = rawData.minorStats[qName];
         if (!rawStat) return;
-        
+
         const qConfig = config[qName] || {};
-        
+
         // [!! 核心 !!] 满分 = 手动配置的满分 || 自动检测的满分
         const fullScore = qConfig.fullScore || rawStat.maxScore;
         const avg = rawStat.avg;
 
         // [!! 核心 !!] 重新计算难度
         const newDifficulty = (fullScore > 0) ? parseFloat((avg / fullScore).toFixed(2)) : 0;
-        
+
         newMinorStats[qName] = {
             ...rawStat, // 复制原始数据 (avg, maxScore, discrimination)
             difficulty: newDifficulty, // 覆盖难度
@@ -6806,12 +6829,12 @@ function getRecalculatedItemStats(subjectName) {
     (rawData.majorQuestions || []).forEach(qName => {
         const rawStat = rawData.majorStats[qName];
         if (!rawStat) return;
-        
+
         const qConfig = config[qName] || {};
         const fullScore = qConfig.fullScore || rawStat.maxScore;
         const avg = rawStat.avg;
         const newDifficulty = (fullScore > 0) ? parseFloat((avg / fullScore).toFixed(2)) : 0;
-        
+
         newMajorStats[qName] = {
             ...rawStat,
             difficulty: newDifficulty,
@@ -6842,13 +6865,13 @@ function drawItemAnalysisChart(type) { // type is 'minor' or 'major'
     const isMinor = (type === 'minor');
     const metricSelect = document.getElementById(isMinor ? 'item-minor-metric-select' : 'item-major-metric-select');
     const chartId = isMinor ? 'item-chart-minor' : 'item-chart-major';
-    
+
     const qNames = isMinor ? stats.minorQuestions : stats.majorQuestions;
     const statsData = isMinor ? stats.minorStats : stats.majorStats;
 
     // 3. 根据下拉框选择指标
     const metric = metricSelect.value; // 'difficulty' or 'discrimination'
-    
+
     // 4. 提取数据
     const data = qNames.map(qName => {
         return (statsData[qName] && statsData[qName][metric] !== undefined) ? statsData[qName][metric] : 0;
@@ -6863,7 +6886,7 @@ function drawItemAnalysisChart(type) { // type is 'minor' or 'major'
         title = `各${isMinor ? '小' : '大'}题区分度`;
         yAxisRange = [-0.2, 1];
     }
-    
+
     // 6. 渲染图表
     renderItemAnalysisBarChart(chartId, title, qNames, data, yAxisRange);
 }
@@ -6882,10 +6905,10 @@ function populateItemAnalysisConfigModal() {
     // 1. 获取原始数据 和 已存配置
     const rawData = G_ItemAnalysisData[subjectName];
     const subjectConfig = G_ItemAnalysisConfig[subjectName] || {};
-    
+
     // 2. 获取重新计算后的数据 (用于显示 placeholder)
     const recalculatedStats = getRecalculatedItemStats(subjectName);
-    
+
     const tableBody = document.getElementById('item-config-table-body');
     let html = '';
 
@@ -6893,13 +6916,13 @@ function populateItemAnalysisConfigModal() {
     const createRow = (qName, type, stat) => {
         if (!stat) return '';
         const qConfig = subjectConfig[qName] || {};
-        
+
         // 满分：placeholder 是自动检测的，value 是用户手填的
         const autoFull = stat.maxScore;
         const manualFull = qConfig.fullScore || '';
-        
+
         const content = qConfig.content || '';
-        
+
         return `
             <tr data-q-name="${qName}">
                 <td><strong>${qName}</strong> (${type})</td>
@@ -6929,7 +6952,7 @@ function populateItemAnalysisConfigModal() {
     (recalculatedStats.minorQuestions || []).forEach(qName => {
         html += createRow(qName, '小题', recalculatedStats.minorStats[qName]);
     });
-    
+
     tableBody.innerHTML = html;
 
     // 5. 显示弹窗
@@ -6958,7 +6981,7 @@ function saveItemAnalysisConfigFromModal() {
         const qName = row.dataset.qName;
         const manualFullInput = row.querySelector('.item-config-full').value;
         const contentInput = row.querySelector('.item-config-content').value;
-        
+
         const manualFull = parseFloat(manualFullInput);
 
         // [!! 核心 !!] 如果输入了有效数字，则保存；否则保存 undefined (以触发回退)
@@ -6967,12 +6990,12 @@ function saveItemAnalysisConfigFromModal() {
             content: contentInput || undefined
         };
     });
-    
+
     // 3. 更新全局变量和 localStorage
     allConfigs[subjectName] = subjectConfig;
     G_ItemAnalysisConfig = allConfigs;
     localStorage.setItem('G_ItemAnalysisConfig', JSON.stringify(allConfigs));
-    
+
     // 4. 关闭弹窗
     modal.style.display = 'none';
 
@@ -6997,14 +7020,14 @@ function calculateLayeredItemStats(subjectName, numGroups, filteredStudents) {
         return { groupStats: {}, qNames: [], overallDifficulty: {} };
     }
     const rawData = G_ItemAnalysisData[subjectName];
-    
+
     // [!! 修正 !!] "qNames" 仅用于小题图表X轴，保持不变
-    const qNames = rawData.minorQuestions || []; 
-    
+    const qNames = rawData.minorQuestions || [];
+
     // 2. 获取重新计算后的 "满分" 配置
     const recalculatedStats = getRecalculatedItemStats(subjectName);
     const overallDifficulty = {}; // (用于柱状图)
-    
+
     // 3. 获取有效学生并按总分排序 (高 -> 低)
     const validStudents = (filteredStudents || [])
         .filter(s => typeof s.totalScore === 'number' && !isNaN(s.totalScore))
@@ -7019,13 +7042,13 @@ function calculateLayeredItemStats(subjectName, numGroups, filteredStudents) {
     const studentGroups = [];
     for (let i = 0; i < numGroups; i++) {
         const group = validStudents.slice(i * groupSize, (i + 1) * groupSize);
-        if (group.length > 0) { 
+        if (group.length > 0) {
             studentGroups.push(group);
         }
     }
-    
+
     // 5. [!! 修正 !!] (Bug 修复) 计算 *所有* 题目的层均分
-    const groupStats = {}; 
+    const groupStats = {};
 
     // (辅助函数)
     const calculateGroupRates = (qNameList, scoreType, statsType) => {
@@ -7035,9 +7058,9 @@ function calculateLayeredItemStats(subjectName, numGroups, filteredStudents) {
             // (a) 获取该题的 "正确" 满分
             const stat = recalculatedStats[statsType][qName];
             if (!stat) return;
-            
+
             const fullScore = stat.manualFullScore || stat.maxScore;
-            
+
             if (!fullScore || fullScore === 0) {
                 studentGroups.forEach((_, index) => {
                     const groupName = `G${index + 1}`;
@@ -7067,11 +7090,11 @@ function calculateLayeredItemStats(subjectName, numGroups, filteredStudents) {
             });
         });
     };
-    
+
     // [!! 修正 !!] (Bug 修复) 同时计算小题和大题
     calculateGroupRates(rawData.minorQuestions, 'minorScores', 'minorStats');
     calculateGroupRates(rawData.majorQuestions, 'majorScores', 'majorStats');
-    
+
     // 6. [!! 不变 !!] (Bug 修复)
     // "overallDifficulty" 仅用于小题对比图的柱状图，所以 *只* 计算小题
     qNames.forEach(qName => {
@@ -7100,13 +7123,13 @@ function drawItemAnalysisLayeredChart() {
     const subjectName = document.getElementById('item-subject-select').value;
     const selectedClass = document.getElementById('item-class-filter').value;
     const numGroups = parseInt(document.getElementById('item-layer-groups').value);
-    
+
     // 2. 获取筛选后的学生
     const allStudents = G_ItemAnalysisData[subjectName]?.students || [];
     const filteredStudents = (selectedClass === 'ALL')
         ? allStudents
         : allStudents.filter(s => s.class === selectedClass);
-    
+
     // 3. [核心] 计算分层数据 (现在会返回正确的 overallDifficulty)
     const { groupStats, qNames, overallDifficulty } = calculateLayeredItemStats(subjectName, numGroups, filteredStudents);
 
@@ -7125,15 +7148,15 @@ function drawItemAnalysisLayeredChart() {
         data: qNames.map(qName => overallDifficulty[qName]),
         barWidth: '60%',
         itemStyle: { opacity: 0.6, color: '#909399' },
-        z: 3 
+        z: 3
     });
     legendData.push('全体得分率');
 
     const lineColors = [
-        '#007bff', '#28a745', '#17a2b8', '#ffc107', '#fd7e14', 
+        '#007bff', '#28a745', '#17a2b8', '#ffc107', '#fd7e14',
         '#6f42c1', '#dc3545', '#e83e8c', '#6c757d', '#343a40'
     ];
-    
+
     Object.keys(groupStats).forEach((groupName, index) => {
         legendData.push(groupName);
         series.push({
@@ -7145,7 +7168,7 @@ function drawItemAnalysisLayeredChart() {
             z: 10
         });
     });
-    
+
     // 5. ECharts 配置 (不变)
     const option = {
         title: {
@@ -7231,7 +7254,7 @@ function calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents
     const validStudents = (filteredStudents || [])
         .filter(s => typeof s.totalScore === 'number' && !isNaN(s.totalScore))
         .sort((a, b) => b.totalScore - a.totalScore);
-    
+
     if (validStudents.length === 0) {
         return { groupStats: {}, knowledgePoints: knowledgePoints, studentsWithRates: [] }; // [!! 修正 !!]
     }
@@ -7239,7 +7262,7 @@ function calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents
     // 5. [!! 修正 (Feature) !!] 计算每个学生在每个知识点上的得分率
     validStudents.forEach(student => {
         student.knowledgeRates = {};
-        const aggregates = {}; 
+        const aggregates = {};
         knowledgePoints.forEach(kp => { aggregates[kp] = { totalGot: 0, totalPossible: 0 }; });
 
         // [!! 修正 !!] (Feature) 筛选小题
@@ -7257,7 +7280,7 @@ function calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents
                 }
             });
         }
-        
+
         // [!! 修正 !!] (Feature) 筛选大题
         if (questionType === 'all' || questionType === 'major') {
             (rawData.majorQuestions || []).forEach(qName => {
@@ -7273,9 +7296,9 @@ function calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents
                 }
             });
         }
-        
+
         // (计算得分率)
-        for(const kp in aggregates) {
+        for (const kp in aggregates) {
             const agg = aggregates[kp];
             student.knowledgeRates[kp] = (agg.totalPossible > 0) ? (agg.totalGot / agg.totalPossible) : null;
         }
@@ -7292,11 +7315,11 @@ function calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents
     }
 
     // 7. [核心] 计算每层在每个知识点上的平均得分率 (不变)
-    const groupStats = {}; 
+    const groupStats = {};
     studentGroups.forEach((group, index) => {
         const groupName = `G${index + 1}`;
         groupStats[groupName] = {};
-        
+
         knowledgePoints.forEach(kp => {
             let totalRate = 0;
             let validCount = 0;
@@ -7310,7 +7333,7 @@ function calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents
             groupStats[groupName][kp] = (validCount > 0) ? (totalRate / validCount) : 0;
         });
     });
-    
+
     // [!! 修正 !!] (Feature) 返回 studentsWithRates
     return { groupStats, knowledgePoints, studentsWithRates: validStudents };
 }
@@ -7344,7 +7367,7 @@ function drawItemAnalysisKnowledgeChart() {
 
     // 3. [核心] 计算分层数据 (传入筛选后的学生)
     const { groupStats, knowledgePoints } = calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents);
-    
+
     if (knowledgePoints.length === 0) {
         chartDom.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding-top: 50px;">未找到已配置“考查内容”的题目，请先点击“配置题目”。</p>`;
         return;
@@ -7352,9 +7375,9 @@ function drawItemAnalysisKnowledgeChart() {
 
     // 4. 准备 ECharts Series (不变)
     const series = [];
-    const legendData = Object.keys(groupStats); 
+    const legendData = Object.keys(groupStats);
     const lineColors = [
-        '#007bff', '#28a745', '#17a2b8', '#ffc107', '#fd7e14', 
+        '#007bff', '#28a745', '#17a2b8', '#ffc107', '#fd7e14',
         '#6f42c1', '#dc3545', '#e83e8c', '#6c757d', '#343a40'
     ];
 
@@ -7362,7 +7385,7 @@ function drawItemAnalysisKnowledgeChart() {
         series.push({
             name: groupName,
             type: 'bar',
-            barGap: 0, 
+            barGap: 0,
             emphasis: { focus: 'series' },
             data: knowledgePoints.map(kp => {
                 return parseFloat((groupStats[groupName][kp] || 0).toFixed(3));
@@ -7424,27 +7447,27 @@ function calculateStudentKnowledgeOutliers(subjectName, numGroups, groupStats, k
     if (!G_ItemAnalysisData || !G_ItemAnalysisData[subjectName]) {
         return [];
     }
-    
+
     // 2. [!! 修正 !!] (Refactor) 直接使用传入的 studentsWithRates
     const validStudents = studentsWithRates;
-    
+
     if (validStudents.length === 0 || knowledgePoints.length === 0) {
         return [];
     }
-        
+
     // (健壮性检查)
     if (!validStudents[0] || !validStudents[0].knowledgeRates) {
         console.error("calculateStudentKnowledgeOutliers: 依赖的学生知识点得分率未计算。");
-        return []; 
+        return [];
     }
-    
+
     // 3. 将学生分层 (G1, G2, ...)
     const groupSize = Math.ceil(validStudents.length / numGroups);
     const outlierList = [];
-    
+
     for (let i = 0; i < validStudents.length; i++) {
         const student = validStudents[i];
-        
+
         // (a) 确定学生所在的层
         const groupIndex = Math.floor(i / groupSize);
         const groupName = `G${groupIndex + 1}`;
@@ -7461,11 +7484,11 @@ function calculateStudentKnowledgeOutliers(subjectName, numGroups, groupStats, k
         knowledgePoints.forEach(kp => {
             const studentRate = student.knowledgeRates[kp];
             const layerRate = layerAverages[kp];
-            
+
             // [!! 修正 !!] 只有当学生和层级都有有效得分率时才比较
             if (studentRate !== null && typeof studentRate === 'number' && typeof layerRate === 'number' && layerRate > 0) {
                 const deviation = studentRate - layerRate;
-                
+
                 if (deviation < worstDeviation) {
                     worstDeviation = deviation;
                     worstKP = kp;
@@ -7476,7 +7499,7 @@ function calculateStudentKnowledgeOutliers(subjectName, numGroups, groupStats, k
                 }
             }
         });
-        
+
         // (c) 存入列表
         outlierList.push({
             name: student.name,
@@ -7512,7 +7535,7 @@ function drawItemAnalysisOutlierTable() {
         // (获取当前筛选的文本)
         const classFilterSelect = document.getElementById('item-class-filter');
         const classFilterText = classFilterSelect.value === 'ALL' ? '全体' : classFilterSelect.options[classFilterSelect.selectedIndex].text;
-        
+
         printBtn.innerText = `🖨️ 打印当前筛选 (${classFilterText})`;
         printBtn.dataset.printTarget = 'filter'; // 设为"筛选"模式
         printBtn.dataset.studentId = ''; // 清空学生ID
@@ -7525,7 +7548,7 @@ function drawItemAnalysisOutlierTable() {
     const sortType = document.getElementById('item-outlier-sort').value;
     const searchQuery = document.getElementById('item-outlier-search').value.toLowerCase();
     const questionType = document.getElementById('item-outlier-type-filter').value; // [!! NEW !!]
-    
+
     // 2. 获取筛选后的学生
     const allStudents = G_ItemAnalysisData[subjectName]?.students || [];
     const filteredStudents = (selectedClass === 'ALL')
@@ -7545,15 +7568,15 @@ function drawItemAnalysisOutlierTable() {
     // 4. [核心] 再调用偏差计算
     // [!! 修正 !!] 传递 questionType 和 studentsWithRates
     G_ItemOutlierList = calculateStudentKnowledgeOutliers(subjectName, numGroups, groupStats, knowledgePoints, studentsWithRates, questionType);
-    
+
     // 5. 根据搜索框过滤
     const searchedList = (searchQuery)
-        ? G_ItemOutlierList.filter(s => 
-            s.name.toLowerCase().includes(searchQuery) || 
+        ? G_ItemOutlierList.filter(s =>
+            s.name.toLowerCase().includes(searchQuery) ||
             String(s.id).toLowerCase().includes(searchQuery)
-          )
+        )
         : G_ItemOutlierList;
-        
+
     // 6. 根据下拉框排序
     if (sortType === 'weakness') {
         searchedList.sort((a, b) => a.worstDeviation - b.worstDeviation);
@@ -7588,18 +7611,18 @@ function drawItemAnalysisOutlierTable() {
                             
                             <td>${s.worstKP}</td>
                             <td>
-                                ${s.worstDeviation < 0 
-                                    ? `<strong class="regress">▼ ${s.worstDeviation.toFixed(2)}</strong>` 
-                                    : s.worstDeviation.toFixed(2)
-                                }
+                                ${s.worstDeviation < 0
+                ? `<strong class="regress">▼ ${s.worstDeviation.toFixed(2)}</strong>`
+                : s.worstDeviation.toFixed(2)
+            }
                             </td>
                             
                             <td>${s.bestKP}</td>
                             <td>
-                                ${s.bestDeviation > 0 
-                                    ? `<strong class="progress">▲ ${s.bestDeviation.toFixed(2)}</strong>` 
-                                    : s.bestDeviation.toFixed(2)
-                                }
+                                ${s.bestDeviation > 0
+                ? `<strong class="progress">▲ ${s.bestDeviation.toFixed(2)}</strong>`
+                : s.bestDeviation.toFixed(2)
+            }
                             </td>
                         </tr>
                     `).join('')}
@@ -7607,7 +7630,7 @@ function drawItemAnalysisOutlierTable() {
             </table>
         `;
     }
-    
+
     tableContainer.innerHTML = html;
 }
 
@@ -7625,7 +7648,7 @@ function populateItemClassFilter(allStudents) {
 
     // 1. 获取当前选中的值 (以便在刷新时保留)
     const oldValue = classFilterSelect.value;
-    
+
     // 2. 从学生列表中提取班级
     const classes = [...new Set(allStudents.map(s => s.class))].sort();
 
@@ -7634,7 +7657,7 @@ function populateItemClassFilter(allStudents) {
     html += classes.map(c => `<option value="${c}">${c}</option>`).join('');
 
     classFilterSelect.innerHTML = html;
-    
+
     // 4. 尝试恢复旧值
     if (oldValue && classFilterSelect.querySelector(`option[value="${oldValue}"]`)) {
         classFilterSelect.value = oldValue;
@@ -7669,7 +7692,7 @@ function drawItemStudentDetailTable(studentId, studentName, studentLayer, questi
     const filteredStudents = (selectedClass === 'ALL')
         ? allStudents
         : allStudents.filter(s => s.class === selectedClass);
-    
+
     // 3. 获取学生对象
     const student = filteredStudents.find(s => String(s.id) === String(studentId));
     if (!student) {
@@ -7680,7 +7703,7 @@ function drawItemStudentDetailTable(studentId, studentName, studentLayer, questi
     // 4. (不变) 获取层均分
     const { groupStats } = calculateLayeredItemStats(subjectName, numGroups, filteredStudents);
     const layerAvgRates = groupStats[studentLayer];
-    
+
     // 5. (不变) 获取题目满分
     const recalculatedStats = getRecalculatedItemStats(subjectName);
     const { minorStats, majorStats, minorQuestions, majorQuestions } = recalculatedStats;
@@ -7705,7 +7728,7 @@ function drawItemStudentDetailTable(studentId, studentName, studentLayer, questi
         let kpClass = '';
         if (kp && kp === worstKP) kpClass = 'regress';
         if (kp && kp === bestKP) kpClass = 'progress';
-        
+
         allQuestionDetails.push({
             qName: qName,
             kp: kp || 'N/A', // [!! 修正 !!] 确保N/A
@@ -7737,11 +7760,11 @@ function drawItemStudentDetailTable(studentId, studentName, studentLayer, questi
         // 处理 'N/A' 和 null
         if (valA === 'N/A' || valA === null || valA === undefined) valA = (direction === 'asc' ? Infinity : -Infinity);
         if (valB === 'N/A' || valB === null || valB === undefined) valB = (direction === 'asc' ? Infinity : -Infinity);
-        
+
         if (key === 'qName' || key === 'kp') {
             // 字符串排序
-            return direction === 'asc' 
-                ? String(valA).localeCompare(String(valB)) 
+            return direction === 'asc'
+                ? String(valA).localeCompare(String(valB))
                 : String(valB).localeCompare(String(valA));
         } else {
             // 数字排序
@@ -7779,13 +7802,13 @@ function drawItemStudentDetailTable(studentId, studentName, studentLayer, questi
                             <td>${(q.layerRate !== null && q.layerRate !== undefined) ? (q.layerRate * 100).toFixed(1) + '%' : 'N/A'}</td>
                             <td>
                                 ${(q.deviation !== null && q.deviation !== undefined)
-                                    ? (q.deviation > 0
-                                        ? `<strong class="progress">▲ ${(q.deviation * 100).toFixed(1)}%</strong>`
-                                        : (q.deviation < 0 
-                                            ? `<strong class="regress">▼ ${(q.deviation * 100).toFixed(1)}%</strong>`
-                                            : `0.0%`))
-                                    : 'N/A'
-                                }
+            ? (q.deviation > 0
+                ? `<strong class="progress">▲ ${(q.deviation * 100).toFixed(1)}%</strong>`
+                : (q.deviation < 0
+                    ? `<strong class="regress">▼ ${(q.deviation * 100).toFixed(1)}%</strong>`
+                    : `0.0%`))
+            : 'N/A'
+        }
                             </td>
                         </tr>
                     `).join('')}
@@ -7793,13 +7816,13 @@ function drawItemStudentDetailTable(studentId, studentName, studentLayer, questi
             </table>
         </div>
     `;
-    
+
     // 9. [!! NEW (Feature) !!] 应用排序样式
     const th = detailContainer.querySelector(`th[data-sort-key="${G_ItemDetailSort.key}"]`);
     if (th) {
         th.classList.add(G_ItemDetailSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
     }
-    
+
     // 10. (显示)
     detailContainer.style.display = 'block';
 
@@ -7901,7 +7924,7 @@ function drawItemScatterQuadrantChart() {
         TL: '#E6A23C', // (左上) 低总分, 高题分 -> "低分高能"
         BL: '#409EFF'  // (左下)
     };
-    
+
     scatterData.forEach(d => {
         const qScore = d[0];
         const tScore = d[1];
@@ -7924,8 +7947,8 @@ function drawItemScatterQuadrantChart() {
             formatter: (params) => {
                 const data = params.data;
                 return `<strong>${data[2]} (${params.seriesName})</strong><br/>` +
-                       `卷面总分: ${data[1]}<br/>` +
-                       `本题得分: ${data[0]}`;
+                    `卷面总分: ${data[1]}<br/>` +
+                    `本题得分: ${data[0]}`;
             }
         },
         grid: { left: '10%', right: '10%', bottom: '10%', top: '15%' },
@@ -7955,7 +7978,7 @@ function drawItemScatterQuadrantChart() {
             { name: '低总分-低题分', type: 'scatter', data: qBL, itemStyle: { color: colors.BL, opacity: 0.7 } },
             {
                 // (这个空 series 专门用于画线)
-                type: 'scatter', 
+                type: 'scatter',
                 data: [],
                 markLine: {
                     silent: true, animation: false,
@@ -7969,7 +7992,7 @@ function drawItemScatterQuadrantChart() {
             }
         ]
     };
-    
+
     // 8. [!! 核心 !!] 动态添加象限标签
     // (必须在 setOption 后调用)
     myChart.setOption(option);
@@ -8018,7 +8041,7 @@ function startPrintJob(studentIds) {
         <p style="text-align: left; margin: 5px 0;"><strong>对比成绩:</strong> ${compareFile}</p>
     `;
 
-    
+
     // 2. [核心] 生成打印页面的完整 HTML
     let html = `
         <html>
@@ -8151,7 +8174,7 @@ function startPrintJob(studentIds) {
         const student = G_StudentsData.find(s => String(s.id) === String(studentId));
         if (!student) continue;
 
-        const pageBreakClass = (i === 0) ? '' : 'print-page-break'; 
+        const pageBreakClass = (i === 0) ? '' : 'print-page-break';
 
         html += `
             <div class="print-page-container ${pageBreakClass}">
@@ -8177,7 +8200,7 @@ function startPrintJob(studentIds) {
     const printWindow = window.open('', '_blank');
     printWindow.document.write(html);
     printWindow.document.close();
-    
+
     setTimeout(() => {
         printWindow.focus();
         printWindow.print();
@@ -8239,7 +8262,7 @@ function generateStudentReportHTML(student) {
     // 3. 生成表格行 HTML
     const tableRowsHtml = G_DynamicSubjectList.map(subject => {
         let subjectScoreDiff = 'N/A';
-        let subjectClassRankDiff = 'N/A'; 
+        let subjectClassRankDiff = 'N/A';
         let subjectGradeRankDiff = 'N/A';
 
         if (oldStudent && oldStudent.scores) {
@@ -8300,7 +8323,7 @@ function generateStudentReportHTML(student) {
             </table>
         </div>
     `;
-    
+
     // (注意：打印时我们不包含 ECharts 雷达图，因为它无法被渲染为字符串)
     return cardHtml + tableHtml;
 }
@@ -8321,7 +8344,7 @@ function startItemDetailPrintJob() {
         alert("打印按钮未找到！");
         return;
     }
-    
+
     // 2. [!! 核心 !!] 检查按钮的模式
     const target = printBtn.dataset.printTarget;
     let studentIdsToPrint = [];
@@ -8337,12 +8360,12 @@ function startItemDetailPrintJob() {
         // G_ItemOutlierList 已经在 drawItemAnalysisOutlierTable 中被正确筛选
         studentIdsToPrint = G_ItemOutlierList.map(s => s.id);
     }
-    
+
     if (studentIdsToPrint.length === 0) {
         alert("没有可打印的学生。");
         return;
     }
-    
+
     // (如果打印列表超过20人，给一个提示)
     if (studentIdsToPrint.length > 20) {
         if (!confirm(`您即将打印 ${studentIdsToPrint.length} 份学生报告。\n这可能需要一些时间来生成，是否继续？`)) {
@@ -8355,7 +8378,7 @@ function startItemDetailPrintJob() {
     const selectedClass = document.getElementById('item-class-filter').value;
     const numGroups = parseInt(document.getElementById('item-layer-groups').value);
     const questionType = document.getElementById('item-outlier-type-filter').value;
-    
+
     // 4. 获取筛选后的学生
     const allStudents = G_ItemAnalysisData[subjectName]?.students || [];
     const filteredStudents = (selectedClass === 'ALL')
@@ -8430,17 +8453,17 @@ function startItemDetailPrintJob() {
     let printedCount = 0;
     for (let i = 0; i < studentIdsToPrint.length; i++) {
         const studentId = studentIdsToPrint[i];
-        
+
         // (A) 找到学生和他们的层级
         const student = studentsWithRates.find(s => s.id === studentId);
         // (B) G_ItemOutlierList 是我们唯一能获取 "layer" 的地方
         const outlierData = G_ItemOutlierList.find(s => s.id === studentId);
-        
+
         if (!student || !outlierData) continue;
-        
+
         const studentLayer = outlierData.layer;
         const pageBreakClass = (printedCount === 0) ? '' : 'print-page-break';
-        
+
         // (C) 生成该学生的报告 HTML
         html += `
             <div class="print-page-container ${pageBreakClass}">
@@ -8456,12 +8479,12 @@ function startItemDetailPrintJob() {
         </body>
         </html>
     `;
-    
+
     // 9. 打开新窗口并打印
     const printWindow = window.open('', '_blank');
     printWindow.document.write(html);
     printWindow.document.close();
-    
+
     setTimeout(() => {
         printWindow.focus();
         printWindow.print();
@@ -8481,7 +8504,7 @@ function generateItemDetailReportHTML(student, studentLayer, subjectName, questi
 
     // 2. 获取层均分
     const layerAvgRates = groupStats[studentLayer];
-    
+
     // 3. 获取题目满分
     const { minorStats, majorStats, minorQuestions, majorQuestions } = recalculatedStats;
 
@@ -8498,7 +8521,7 @@ function generateItemDetailReportHTML(student, studentLayer, subjectName, questi
         const layerRate = layerAvgRates[qName];
         const deviation = (studentRate !== null && typeof layerRate === 'number') ? (studentRate - layerRate) : null;
         const kp = (G_ItemAnalysisConfig[subjectName] && G_ItemAnalysisConfig[subjectName][qName]) ? G_ItemAnalysisConfig[subjectName][qName].content : '';
-        
+
         allQuestionDetails.push({
             qName: qName,
             kp: kp || 'N/A',
@@ -8509,7 +8532,7 @@ function generateItemDetailReportHTML(student, studentLayer, subjectName, questi
             deviation: deviation
         });
     };
-    
+
     if (questionType === 'all' || questionType === 'minor') {
         (minorQuestions || []).forEach(qName => {
             processQuestion(qName, minorStats[qName], student.minorScores[qName]);
@@ -8554,13 +8577,13 @@ function generateItemDetailReportHTML(student, studentLayer, subjectName, questi
                             <td>${(q.layerRate !== null && q.layerRate !== undefined) ? (q.layerRate * 100).toFixed(1) + '%' : 'N/A'}</td>
                             <td>
                                 ${(q.deviation !== null && q.deviation !== undefined)
-                                    ? (q.deviation > 0
-                                        ? `<strong class="progress">▲ ${(q.deviation * 100).toFixed(1)}%</strong>`
-                                        : (q.deviation < 0 
-                                            ? `<strong class="regress">▼ ${(q.deviation * 100).toFixed(1)}%</strong>`
-                                            : `0.0%`))
-                                    : 'N/A'
-                                }
+            ? (q.deviation > 0
+                ? `<strong class="progress">▲ ${(q.deviation * 100).toFixed(1)}%</strong>`
+                : (q.deviation < 0
+                    ? `<strong class="regress">▼ ${(q.deviation * 100).toFixed(1)}%</strong>`
+                    : `0.0%`))
+            : 'N/A'
+        }
                             </td>
                         </tr>
                     `).join('')}
@@ -8577,6 +8600,6 @@ function generateItemDetailReportHTML(student, studentLayer, subjectName, questi
             <p style="text-align: left; margin: 5px 0;"><strong>题目范围:</strong> ${typeText}</p>
         </div>
     `;
-    
+
     return headerHtml + tableHtml;
 }

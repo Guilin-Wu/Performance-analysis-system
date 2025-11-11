@@ -738,3 +738,25 @@ td span.regress {
     /* [!!] (修改) 悬停时变为深绿色 */
     background-color: #218838; 
 }
+
+
+/* --- [!! 新增 !!] 模块十二 隐藏功能 --- */
+.multi-exam-item.is-hidden {
+    opacity: 0.6;
+}
+.multi-exam-item.is-hidden .multi-exam-label {
+    /* 为被隐藏的项目添加删除线 */
+    text-decoration: line-through;
+    color: var(--text-muted);
+}
+.multi-exam-buttons button.hide-btn {
+    /* 默认按钮样式 */
+    background-color: #f0f0f0;
+    color: #333;
+}
+.multi-exam-item.is-hidden .multi-exam-buttons button.hide-btn {
+    /* 隐藏状态下的按钮样式 (使其突出) */
+    background-color: #fff3cd; /* 浅黄色 */
+    color: #856404;
+    font-weight: 600;
+}
