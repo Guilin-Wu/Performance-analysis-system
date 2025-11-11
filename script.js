@@ -2824,8 +2824,16 @@ function renderMultiExam(container) {
             document.getElementById('multi-student-report').style.display = 'none';
 
         } else if (role === 'delete') {
-            // (这是原来的 'delete' 逻辑)
-            data.splice(index, 1);
+
+            // [!! 新增 !!]
+            const itemLabel = data[index].label; // 获取考试名称
+            if (confirm(`您确定要删除 "${itemLabel}" 这次考试吗？\n此操作不可撤销。`)) {
+                // 只有用户点击“确定”时，才执行删除
+                data.splice(index, 1);
+            } else {
+                // 如果用户点击“取消”，则退出函数，不执行任何操作
+                return;
+            }
         } else if (role === 'up' && index > 0) {
             [data[index - 1], data[index]] = [data[index], data[index - 1]]; // (交换)
         } else if (role === 'down' && index < data.length - 1) {
@@ -5909,10 +5917,10 @@ function initializeStudentSearch(multiExamData) {
  * - (修复) 更改图表标题，使职责更清晰。
  */
 function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCheckboxes = false) {
-    
+
     // [!!] (不变) 过滤掉被隐藏的考试
     const visibleExamData = multiExamData.filter(e => !e.isHidden);
-    
+
     // [!!] (不变) X轴标签
     const examNames = visibleExamData.map(e => e.label);
 
@@ -5921,8 +5929,8 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
         classRank: [],
         gradeRank: []
     };
-    const subjectData = {}; 
-    const subjectRankData = {}; 
+    const subjectData = {};
+    const subjectRankData = {};
 
     // 1. (不变) 动态初始化科目列表 (基于所有考试的并集)
     const allSubjects = new Set();
@@ -5935,7 +5943,7 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
     const dynamicSubjects = Array.from(allSubjects);
     dynamicSubjects.forEach(subject => {
         subjectData[subject] = [];
-        subjectRankData[subject] = { classRank: [], gradeRank: [] }; 
+        subjectRankData[subject] = { classRank: [], gradeRank: [] };
     });
 
     // 2. (不变) 遍历所有考试，填充数据
@@ -5945,10 +5953,10 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
         if (student) {
             rankData.classRank.push(student.rank || null);
             rankData.gradeRank.push(student.gradeRank || null);
-            
+
             dynamicSubjects.forEach(subject => {
                 subjectData[subject].push(student.scores[subject] || null);
-                
+
                 const classRank = student.classRanks ? student.classRanks[subject] : null;
                 const gradeRank = student.gradeRanks ? student.gradeRanks[subject] : null;
                 subjectRankData[subject].classRank.push(classRank || null);
@@ -5998,7 +6006,7 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
     // 6. [!! 核心逻辑修改 (V4) !!] 
     // rankSeries 永远只使用总分数据
     const rankSeries = [];
-    
+
     rankSeries.push({
         name: '班级排名 (总)', // [!!] 图例名称
         type: 'line',
@@ -6016,8 +6024,8 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
     // [!! 核心修改结束 !!]
 
     // 7. [!! 核心修改 !!] 更改图表标题，使其更清晰
-    renderMultiExamLineChart('multi-exam-score-chart', '各科成绩曲线', examNames, filteredScoreSeries, false); 
-    renderMultiExamLineChart('multi-exam-rank-chart', '总分排名变化曲线', examNames, rankSeries, true); 
+    renderMultiExamLineChart('multi-exam-score-chart', '各科成绩曲线', examNames, filteredScoreSeries, false);
+    renderMultiExamLineChart('multi-exam-rank-chart', '总分排名变化曲线', examNames, rankSeries, true);
 
     // 8. (不变) 绘制详细数据表格
     const tableContainer = document.getElementById('multi-student-table-container');
