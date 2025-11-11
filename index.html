@@ -181,6 +181,32 @@
         </div>
     </div>
 
+
+    <div id="print-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>选择打印范围</h3>
+                <span id="print-modal-close-btn" class="modal-close-btn">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>请选择您要打印的学生范围。这可能需要几秒钟时间来生成所有报告。</p>
+
+                <button id="print-btn-current" class="sidebar-button" style="width: 100%; margin-top: 10px;" disabled>
+                    🖨️ 打印当前学生 (未选择)
+                </button>
+
+                <button id="print-btn-filter" class="sidebar-button"
+                    style="width: 100%; margin-top: 10px; background-color: var(--color-green);">
+                    🖨️ 打印当前筛选 (全体年段)
+                </button>
+
+                <p style="color: var(--text-muted); font-size: 0.9em; margin-top: 15px;">
+                    “打印当前筛选”会打印您在左侧边栏选择的班级（例如 "高一(1)班" 或 "全体年段"）。
+                </p>
+            </div>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
 

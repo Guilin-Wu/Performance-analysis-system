@@ -66,6 +66,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const importCompareBtn = document.getElementById('import-compare-btn'); // (新按钮)
     const clearAllBtn = document.getElementById('clear-all-data-btn'); // [!!] (新增)
 
+
+
+    // [!! NEW (Print Feature) !!]
+    const printModal = document.getElementById('print-modal');
+    const printModalCloseBtn = document.getElementById('print-modal-close-btn');
+    const printBtnCurrent = document.getElementById('print-btn-current');
+    const printBtnFilter = document.getElementById('print-btn-filter');
+
     // 初始化 UI
     initializeUI();
     initializeSubjectConfigs(); // 初始化科目配置
@@ -206,6 +214,39 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // [!!] (新增) 监听“清除所有数据”按钮
+
+
+    // [!! NEW (Print Feature) !!] 打印模态框事件
+    printModalCloseBtn.addEventListener('click', () => {
+        printModal.style.display = 'none';
+    });
+
+    // (打印 "当前学生")
+    printBtnCurrent.addEventListener('click', () => {
+        const studentId = printBtnCurrent.dataset.studentId;
+        if (studentId) {
+            startPrintJob([studentId]); // 启动打印，只传一个学生ID
+        }
+        printModal.style.display = 'none';
+    });
+
+    // (打印 "当前筛选")
+    printBtnFilter.addEventListener('click', () => {
+        // 1. 获取当前筛选的学生列表
+        let studentsToPrint = G_StudentsData;
+        if (G_CurrentClassFilter !== 'ALL') {
+            studentsToPrint = G_StudentsData.filter(s => s.class === G_CurrentClassFilter);
+        }
+        
+        // 2. 提取他们的 ID
+        const studentIds = studentsToPrint.map(s => s.id);
+        if (studentIds.length > 0) {
+            startPrintJob(studentIds); // 启动打印
+        }
+        printModal.style.display = 'none';
+    });
+
+
 
     clearAllBtn.addEventListener('click', () => {
         if (confirm("您确定要清除所有已导入的“本次成绩”和“对比成绩”吗？\n\n(此操作不会清除“模块十二”中保存的数据)")) {
@@ -1131,7 +1172,8 @@ function renderDashboard(container, stats, activeData) {
 
 /**
  * 9.2. 模块二：学生个体报告 (已集成“进退步”对比)
- * [!!] 已修改：为 student-card 增加了 sc-xxx 类，用于CSS美化
+ * * [!! 修正版 18 !!] - 2025-11-12
+ * - (Feature) 新增“打印报告”按钮和模态框触发器。
  */
 function renderStudent(container, students, stats) {
 
@@ -1144,6 +1186,10 @@ function renderStudent(container, students, stats) {
                 <input type="text" id="student-search" placeholder="输入姓名或考号..." autocomplete="off">
                 <div class="search-results" id="student-search-results"></div>
             </div>
+            
+            <button id="open-print-modal-btn" class="sidebar-button" style="margin-left: auto; background-color: var(--color-blue);">
+                🖨️ 打印报告
+            </button>
         </div>
         <div id="student-report-content">
             <p>请输入关键词以搜索学生。</p>
@@ -1154,6 +1200,35 @@ function renderStudent(container, students, stats) {
     const searchInput = document.getElementById('student-search');
     const resultsContainer = document.getElementById('student-search-results');
     const contentEl = document.getElementById('student-report-content');
+    
+    // [!! NEW (Print Feature) !!] 绑定打印按钮
+    const openPrintModalBtn = document.getElementById('open-print-modal-btn');
+    const printModal = document.getElementById('print-modal');
+    const printBtnCurrent = document.getElementById('print-btn-current');
+    const printBtnFilter = document.getElementById('print-btn-filter');
+
+    openPrintModalBtn.addEventListener('click', () => {
+        // 1. 更新“打印当前学生”按钮的状态
+        const currentStudentId = contentEl.dataset.currentStudentId;
+        if (currentStudentId) {
+            const currentStudentName = contentEl.dataset.currentStudentName;
+            printBtnCurrent.innerHTML = `🖨️ 打印当前学生 (${currentStudentName})`;
+            printBtnCurrent.dataset.studentId = currentStudentId;
+            printBtnCurrent.disabled = false;
+        } else {
+            printBtnCurrent.innerHTML = `🖨️ 打印当前学生 (未选择)`;
+            printBtnCurrent.dataset.studentId = '';
+            printBtnCurrent.disabled = true;
+        }
+        
+        // 2. 更新“打印筛选”按钮的状态
+        const filterText = (G_CurrentClassFilter === 'ALL') ? '全体年段' : G_CurrentClassFilter;
+        printBtnFilter.innerHTML = `🖨️ 打印当前筛选 (${filterText})`;
+        
+        // 3. 打开模态框
+        printModal.style.display = 'flex';
+    });
+
 
     // 这是一个辅助函数，用于显示学生的详细报告
     const showReport = (studentId) => {
@@ -1162,6 +1237,10 @@ function renderStudent(container, students, stats) {
             contentEl.innerHTML = `<p>未找到学生。</p>`;
             return;
         }
+
+        // [!! NEW (Print Feature) !!] 存储当前学生信息，以便打印
+        contentEl.dataset.currentStudentId = student.id;
+        contentEl.dataset.currentStudentName = student.name;
 
         // ======================================================
         // ▼▼▼ (核心修改) 查找对比数据并计算进退步 ▼▼▼
@@ -1225,18 +1304,16 @@ function renderStudent(container, students, stats) {
 
                                 ${G_DynamicSubjectList.map(subject => {
             let subjectScoreDiff = 'N/A';
-            let subjectClassRankDiff = 'N/A'; // [!!] (新增)
-            let subjectGradeRankDiff = 'N/A'; // [!!] (重命名)
+            let subjectClassRankDiff = 'N/A'; 
+            let subjectGradeRankDiff = 'N/A';
 
             if (oldStudent && oldStudent.scores) {
-                // 得分变化 (不变)
                 const oldScore = oldStudent.scores[subject] || 0;
                 const newScore = student.scores[subject] || 0;
                 if (oldScore !== 0 || newScore !== 0) {
                     subjectScoreDiff = (newScore - oldScore).toFixed(2);
                 }
 
-                // [!!] (新增) 班级科目排名变化
                 if (oldStudent.classRanks && student.classRanks) {
                     const oldClassRank = oldStudent.classRanks[subject] || 0;
                     const newClassRank = student.classRanks[subject] || 0;
@@ -1245,7 +1322,6 @@ function renderStudent(container, students, stats) {
                     }
                 }
 
-                // [!!] (修改) 年级科目排名变化
                 if (oldStudent.gradeRanks && student.gradeRanks) {
                     const oldGradeRank = oldStudent.gradeRanks[subject] || 0;
                     const newGradeRank = student.gradeRanks[subject] || 0;
@@ -6086,6 +6162,9 @@ function renderItemAnalysis(container) {
                         <label for="item-outlier-search">索引学生:</label>
                         <input type="text" id="item-outlier-search" placeholder="输入姓名或考号..." style="width: 150px;">
                     </div>
+                    <button id="item-print-btn" class="sidebar-button" style="background-color: var(--color-blue); margin-left: auto;">
+                        🖨️ 打印
+                    </button>
                 </div>
 
                 <p style="color: var(--text-muted); font-size: 0.9em; margin-top: 0;">
@@ -6260,6 +6339,12 @@ function renderItemAnalysis(container) {
     scatterQSelect.addEventListener('change', () => {
         drawItemScatterQuadrantChart();
     });
+
+    const itemPrintBtn = document.getElementById('item-print-btn');
+    if (itemPrintBtn) {
+        // [!! 核心 !!] 按钮点击时，调用新的多功能打印函数
+        itemPrintBtn.addEventListener('click', startItemDetailPrintJob);
+    }
 
     // 11. 绑定配置按钮和模态框事件
     configBtn.addEventListener('click', populateItemAnalysisConfigModal);
@@ -7421,6 +7506,18 @@ function drawItemAnalysisOutlierTable() {
     const detailContainer = document.getElementById('item-student-detail-container');
     if (detailContainer) detailContainer.style.display = 'none';
 
+    // [!! 新增 (One Button) !!] 重置打印按钮
+    const printBtn = document.getElementById('item-print-btn');
+    if (printBtn) {
+        // (获取当前筛选的文本)
+        const classFilterSelect = document.getElementById('item-class-filter');
+        const classFilterText = classFilterSelect.value === 'ALL' ? '全体' : classFilterSelect.options[classFilterSelect.selectedIndex].text;
+        
+        printBtn.innerText = `🖨️ 打印当前筛选 (${classFilterText})`;
+        printBtn.dataset.printTarget = 'filter'; // 设为"筛选"模式
+        printBtn.dataset.studentId = ''; // 清空学生ID
+    }
+
     // 1. 获取参数
     const subjectName = document.getElementById('item-subject-select').value;
     const selectedClass = document.getElementById('item-class-filter').value;
@@ -7705,6 +7802,15 @@ function drawItemStudentDetailTable(studentId, studentName, studentLayer, questi
     
     // 10. (显示)
     detailContainer.style.display = 'block';
+
+    // [!!] 在这里添加第 3 个代码片段
+    // 11. [!! 修改 (One Button) !!] 更新打印按钮状态
+    const printBtn = document.getElementById('item-print-btn');
+    if (printBtn) {
+        printBtn.innerText = `🖨️ 打印 ${studentName}`;
+        printBtn.dataset.printTarget = 'current'; // 设为"当前"模式
+        printBtn.dataset.studentId = studentId; // 存储ID
+    }
 }
 
 // =====================================================================
@@ -7877,4 +7983,600 @@ function drawItemScatterQuadrantChart() {
         ];
         myChart.setOption({ graphic: graphicElements });
     }, 0);
+}
+
+
+
+// =====================================================================
+// [!! NEW (Print Feature) !!] 模块二：打印引擎
+// =====================================================================
+
+/**
+ * 1. [打印引擎-核心] 启动打印作业
+ * * [!! 修正版 22 (布局最终修复) !!]
+ * - (修复1 - 采纳用户建议) 移除了 "print-header-fixed"，
+ * -   移除了 body 的 "padding-top"，
+ * -   并设置 "print-header-preview" 在打印时可见 (display: block)，
+ * -   这样页眉只在学生报告开头出现一次，而不是在每页固定。
+ * - (修复2 - 上次建议) 强制 .student-card 使用 "grid-template-columns: repeat(5, 1fr)"，
+ * -   以解决A4窄页上的 3+2 换行问题。
+ */
+function startPrintJob(studentIds) {
+    if (!studentIds || studentIds.length === 0) {
+        alert("没有可打印的学生。");
+        return;
+    }
+
+    // 1. 获取考试信息
+    const mainFile = localStorage.getItem('G_MainFileName') || 'N/A';
+    const compareFile = localStorage.getItem('G_CompareFileName') || 'N/A';
+
+    // (页眉的 HTML 内容)
+    const headerHtml = `
+        <h2>学生个体报告</h2>
+        <p style="text-align: left; margin: 5px 0;"><strong>本次成绩:</strong> ${mainFile}</p>
+        <p style="text-align: left; margin: 5px 0;"><strong>对比成绩:</strong> ${compareFile}</p>
+    `;
+
+    
+    // 2. [核心] 生成打印页面的完整 HTML
+    let html = `
+        <html>
+        <head>
+            <title>学生个体报告</title>
+            <style>
+                /* [!! (Bug Fix) !!] 
+                   (将关键布局样式内置，防止加载延迟) 
+                */
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                }
+                .student-card {
+                    display: grid;
+                    /* [!! 修复 2 !!] 强制5列布局 */
+                    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                    gap: 15px;
+                    padding: 20px;
+                    border: 1px solid #EEE;
+                    border-radius: 8px;
+                    margin-bottom: 20px;
+                }
+                .student-card div {
+                    padding: 10px;
+                    border-radius: 8px;
+                }
+                .student-card div span { display: block; font-size: 0.9em; color: #6c757d; }
+                .student-card div strong { font-size: 1.5em; color: #333; }
+                
+                /* (复制 style.css 中的颜色定义) */
+                .student-card .sc-name { background-color: rgba(0, 123, 255, 0.1); }
+                .student-card .sc-name strong { color: #007bff; }
+                .student-card .sc-id { background-color: rgba(108, 117, 125, 0.1); }
+                .student-card .sc-id strong { color: #6c757d; }
+                .student-card .sc-total { background-color: rgba(40, 167, 69, 0.1); }
+                .student-card .sc-total strong { color: #28a745; }
+                .student-card .sc-rank { background-color: rgba(253, 126, 20, 0.1); }
+                .student-card .sc-rank strong { color: #fd7e14; }
+                .student-card .sc-grade-rank { background-color: rgba(111, 66, 193, 0.1); }
+                .student-card .sc-grade-rank strong { color: #6f42c1; }
+                
+                .progress { color: #00a876 !important; }
+                .regress { color: #e53935 !important; }
+                
+                .table-container { width: 100%; margin-top: 15px; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { 
+                    border: 1px solid #999; 
+                    padding: 10px; 
+                    text-align: center; 
+                    font-size: 0.9em;
+                }
+                th { background-color: #f0f0f0; }
+                /* [!! 关键样式结束 !!] */
+
+
+                /* --- 打印机设置 --- */
+                @media print {
+                    @page {
+                        size: A4 portrait;
+                        margin: 2cm;
+                    }
+                    body {
+                        -webkit-print-color-adjust: exact;
+                        print-color-adjust: exact;
+                        /* [!! 修复 1 !!] 移除了 padding-top: 130px; */
+                    }
+                    
+                    /* [!! 修复 1 !!] 移除了 .print-header-fixed 规则 */
+                    
+                    .print-header-preview {
+                        /* [!! 修复 1 !!] 让它在打印时显示 */
+                        display: block !important;
+                        text-align: center;
+                        border-bottom: 2px solid #000;
+                        padding-bottom: 15px;
+                        margin-bottom: 20px;
+                    }
+                    .print-page-break {
+                        page-break-before: always;
+                    }
+                    .print-page-container {
+                        box-shadow: none;
+                        margin: 0;
+                        padding: 0;
+                        width: auto;
+                        min-height: auto;
+                    }
+                    .student-card {
+                        box-shadow: none;
+                        border: 1px solid #ccc;
+                    }
+                }
+                
+                /* --- 打印预览设置 --- */
+                @media screen {
+                    body {
+                        background-color: #EEE;
+                    }
+                    .print-header-fixed {
+                        /* (这个在预览时也不需要了) */
+                        display: none;
+                    }
+                    .print-page-container {
+                        background-color: #FFF;
+                        width: 210mm;
+                        min-height: 297mm;
+                        margin: 20px auto;
+                        padding: 2cm;
+                        box-shadow: 0 0 10px rgba(0,0,0,0.2);
+                        box-sizing: border-box;
+                    }
+                    .print-header-preview {
+                        text-align: center;
+                        border-bottom: 2px solid #000;
+                        padding-bottom: 15px;
+                        margin-bottom: 20px;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            
+            <main class="print-content-wrapper">
+    `;
+
+    // 3. 循环生成每个学生的报告
+    for (let i = 0; i < studentIds.length; i++) {
+        const studentId = studentIds[i];
+        const student = G_StudentsData.find(s => String(s.id) === String(studentId));
+        if (!student) continue;
+
+        const pageBreakClass = (i === 0) ? '' : 'print-page-break'; 
+
+        html += `
+            <div class="print-page-container ${pageBreakClass}">
+            
+                <div class="print-header-preview">
+                    ${headerHtml}
+                </div>
+
+                ${generateStudentReportHTML(student)}
+
+            </div>
+        `;
+    }
+
+    // 4. 关闭 HTML
+    html += `
+            </main>
+        </body>
+        </html>
+    `;
+
+    // 5. 打开新窗口并打印 (保持1秒延迟)
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(html);
+    printWindow.document.close();
+    
+    setTimeout(() => {
+        printWindow.focus();
+        printWindow.print();
+    }, 500);
+}
+
+/**
+ * 2. [打印引擎-辅助] 为单个学生生成报告的 HTML
+ * (这是 renderStudent 中 showReport 的无图表、返回字符串版本)
+ * @param {Object} student - 要打印的学生对象
+ * @returns {string} - 该学生报告的 HTML
+ */
+function generateStudentReportHTML(student) {
+    if (!student) return '';
+
+    // 1. 查找对比数据
+    let oldStudent = null;
+    let scoreDiff = 'N/A', rankDiff = 'N/A', gradeRankDiff = 'N/A';
+
+    if (G_CompareData && G_CompareData.length > 0) {
+        oldStudent = G_CompareData.find(s => String(s.id) === String(student.id));
+    }
+
+    if (oldStudent) {
+        scoreDiff = (student.totalScore - oldStudent.totalScore).toFixed(2);
+        rankDiff = oldStudent.rank - student.rank;
+        gradeRankDiff = (oldStudent.gradeRank && student.gradeRank) ? oldStudent.gradeRank - student.gradeRank : 'N/A';
+    }
+
+    // 2. 生成学生卡片 HTML
+    const cardHtml = `
+        <div class="student-card">
+            <div class="sc-name"><span>姓名</span><strong>${student.name}</strong></div>
+            <div class="sc-id"><span>考号</span><strong>${student.id}</strong></div>
+            <div class="sc-total">
+                <span>总分 (上次: ${oldStudent ? oldStudent.totalScore : 'N/A'})</span>
+                <strong class="${scoreDiff > 0 ? 'progress' : scoreDiff < 0 ? 'regress' : ''}">
+                    ${student.totalScore}
+                    ${(scoreDiff !== 'N/A' && oldStudent) ? `(${scoreDiff > 0 ? '▲' : '▼'} ${Math.abs(scoreDiff)})` : ''}
+                </strong>
+            </div>
+            <div class="sc-rank">
+                <span>班级排名 (上次: ${oldStudent ? oldStudent.rank : 'N/A'})</span>
+                <strong class="${rankDiff > 0 ? 'progress' : rankDiff < 0 ? 'regress' : ''}">
+                    ${student.rank}
+                    ${(rankDiff !== 'N/A' && oldStudent) ? `(${rankDiff > 0 ? '▲' : '▼'} ${Math.abs(rankDiff)})` : ''}
+                </strong>
+            </div>
+            <div class="sc-grade-rank">
+                <span>年级排名 (上次: ${oldStudent ? (oldStudent.gradeRank || 'N/A') : 'N/A'})</span>
+                <strong class="${gradeRankDiff > 0 ? 'progress' : gradeRankDiff < 0 ? 'regress' : ''}">
+                    ${student.gradeRank || 'N/A'}
+                    ${(gradeRankDiff !== 'N/A' && oldStudent) ? `(${gradeRankDiff > 0 ? '▲' : '▼'} ${Math.abs(gradeRankDiff)})` : ''}
+                </strong>
+            </div>
+        </div>
+    `;
+
+    // 3. 生成表格行 HTML
+    const tableRowsHtml = G_DynamicSubjectList.map(subject => {
+        let subjectScoreDiff = 'N/A';
+        let subjectClassRankDiff = 'N/A'; 
+        let subjectGradeRankDiff = 'N/A';
+
+        if (oldStudent && oldStudent.scores) {
+            const oldScore = oldStudent.scores[subject] || 0;
+            const newScore = student.scores[subject] || 0;
+            if (oldScore !== 0 || newScore !== 0) {
+                subjectScoreDiff = (newScore - oldScore).toFixed(2);
+            }
+            if (oldStudent.classRanks && student.classRanks) {
+                const oldClassRank = oldStudent.classRanks[subject] || 0;
+                const newClassRank = student.classRanks[subject] || 0;
+                if (oldClassRank > 0 && newClassRank > 0) {
+                    subjectClassRankDiff = oldClassRank - newClassRank;
+                }
+            }
+            if (oldStudent.gradeRanks && student.gradeRanks) {
+                const oldGradeRank = oldStudent.gradeRanks[subject] || 0;
+                const newGradeRank = student.gradeRanks[subject] || 0;
+                if (oldGradeRank > 0 && newGradeRank > 0) {
+                    subjectGradeRankDiff = oldGradeRank - newGradeRank;
+                }
+            }
+        }
+        return `
+            <tr>
+                <td>${subject}</td>
+                <td>
+                    ${student.scores[subject] || 0}
+                    ${(oldStudent && subjectScoreDiff !== 'N/A') ? `<span class="${subjectScoreDiff > 0 ? 'progress' : subjectScoreDiff < 0 ? 'regress' : ''}">(${subjectScoreDiff > 0 ? '▲' : '▼'} ${Math.abs(subjectScoreDiff)})</span>` : ''}
+                </td>
+                <td>
+                    ${student.classRanks ? (student.classRanks[subject] || 'N/A') : 'N/A'}
+                    ${(oldStudent && subjectClassRankDiff !== 'N/A') ? `<span class="${subjectClassRankDiff > 0 ? 'progress' : subjectClassRankDiff < 0 ? 'regress' : ''}">(${subjectClassRankDiff > 0 ? '▲' : '▼'} ${Math.abs(subjectClassRankDiff)})</span>` : ''}
+                </td>
+                <td>
+                    ${student.gradeRanks ? (student.gradeRanks[subject] || 'N/A') : 'N/A'}
+                    ${(oldStudent && subjectGradeRankDiff !== 'N/A') ? `<span class="${subjectGradeRankDiff > 0 ? 'progress' : subjectGradeRankDiff < 0 ? 'regress' : ''}">(${subjectGradeRankDiff > 0 ? '▲' : '▼'} ${Math.abs(subjectGradeRankDiff)})</span>` : ''}
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    // 4. 生成完整表格 HTML
+    const tableHtml = `
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>科目</th>
+                        <th>得分 (变化)</th>
+                        <th>班级科目排名 (变化)</th>
+                        <th>年级科目排名 (变化)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tableRowsHtml}
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    // (注意：打印时我们不包含 ECharts 雷达图，因为它无法被渲染为字符串)
+    return cardHtml + tableHtml;
+}
+
+
+// =====================================================================
+// [!! NEW (Feature) !!] 模块十三：打印引擎 (One Button 完整版)
+// =====================================================================
+
+/**
+ * 13.18. [NEW] 启动“小题分析-学生诊断表”的打印作业 (智能版)
+ * (此函数由 "item-print-btn" 按钮直接调用)
+ */
+function startItemDetailPrintJob() {
+    // 1. 找到打印按钮自己
+    const printBtn = document.getElementById('item-print-btn');
+    if (!printBtn) {
+        alert("打印按钮未找到！");
+        return;
+    }
+    
+    // 2. [!! 核心 !!] 检查按钮的模式
+    const target = printBtn.dataset.printTarget;
+    let studentIdsToPrint = [];
+
+    if (target === 'current') {
+        // 模式A: 打印当前选中的学生
+        const studentId = printBtn.dataset.studentId;
+        if (studentId) {
+            studentIdsToPrint = [studentId];
+        }
+    } else {
+        // 模式B: 打印当前筛选的列表
+        // G_ItemOutlierList 已经在 drawItemAnalysisOutlierTable 中被正确筛选
+        studentIdsToPrint = G_ItemOutlierList.map(s => s.id);
+    }
+    
+    if (studentIdsToPrint.length === 0) {
+        alert("没有可打印的学生。");
+        return;
+    }
+    
+    // (如果打印列表超过20人，给一个提示)
+    if (studentIdsToPrint.length > 20) {
+        if (!confirm(`您即将打印 ${studentIdsToPrint.length} 份学生报告。\n这可能需要一些时间来生成，是否继续？`)) {
+            return;
+        }
+    }
+
+    // 3. [!! 核心 !!] 获取所有计算所需的上下文
+    const subjectName = document.getElementById('item-subject-select').value;
+    const selectedClass = document.getElementById('item-class-filter').value;
+    const numGroups = parseInt(document.getElementById('item-layer-groups').value);
+    const questionType = document.getElementById('item-outlier-type-filter').value;
+    
+    // 4. 获取筛选后的学生
+    const allStudents = G_ItemAnalysisData[subjectName]?.students || [];
+    const filteredStudents = (selectedClass === 'ALL')
+        ? allStudents
+        : allStudents.filter(s => s.class === selectedClass);
+
+    // 5. [!! 核心计算 !!] (这会比较慢，但必须执行)
+    const recalculatedStats = getRecalculatedItemStats(subjectName);
+    const { groupStats, knowledgePoints, studentsWithRates } = calculateLayeredKnowledgeStats(subjectName, numGroups, filteredStudents, questionType);
+
+    // 6. 构建打印页面的完整 HTML (复用 Module 2 的样式)
+    let html = `
+        <html>
+        <head>
+            <title>学生知识点诊断</title>
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                }
+                .print-page-container {
+                    padding: 2cm;
+                }
+                
+                /* 基础表格样式 (来自 style.css) */
+                .table-container { width: 100%; margin-top: 15px; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { 
+                    border: 1px solid #999; 
+                    padding: 10px; 
+                    text-align: center; 
+                    font-size: 0.9em;
+                }
+                th { background-color: #f0f0f0; }
+                
+                /* 进/退步颜色 (来自 style.css) */
+                .progress { color: #00a876 !important; }
+                .regress { color: #e53935 !important; }
+                
+                /* 打印机设置 */
+                @media print {
+                    @page {
+                        size: A4 portrait;
+                        margin: 0; /* 我们用 padding: 2cm 控制 */
+                    }
+                    body {
+                        -webkit-print-color-adjust: exact;
+                        print-color-adjust: exact;
+                    }
+                    .print-page-break {
+                        page-break-before: always;
+                    }
+                }
+                @media screen {
+                    /* 预览样式 */
+                    body { background-color: #EEE; }
+                    .print-page-container {
+                        background-color: #FFF;
+                        width: 210mm;
+                        min-height: 297mm;
+                        margin: 20px auto;
+                        box-shadow: 0 0 10px rgba(0,0,0,0.2);
+                        box-sizing: border-box;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <main class="print-content-wrapper">
+    `;
+
+    // 7. [!! 核心循环 !!]
+    let printedCount = 0;
+    for (let i = 0; i < studentIdsToPrint.length; i++) {
+        const studentId = studentIdsToPrint[i];
+        
+        // (A) 找到学生和他们的层级
+        const student = studentsWithRates.find(s => s.id === studentId);
+        // (B) G_ItemOutlierList 是我们唯一能获取 "layer" 的地方
+        const outlierData = G_ItemOutlierList.find(s => s.id === studentId);
+        
+        if (!student || !outlierData) continue;
+        
+        const studentLayer = outlierData.layer;
+        const pageBreakClass = (printedCount === 0) ? '' : 'print-page-break';
+        
+        // (C) 生成该学生的报告 HTML
+        html += `
+            <div class="print-page-container ${pageBreakClass}">
+                ${generateItemDetailReportHTML(student, studentLayer, subjectName, questionType, groupStats, recalculatedStats)}
+            </div>
+        `;
+        printedCount++;
+    }
+
+    // 8. 关闭 HTML
+    html += `
+            </main>
+        </body>
+        </html>
+    `;
+    
+    // 9. 打开新窗口并打印
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(html);
+    printWindow.document.close();
+    
+    setTimeout(() => {
+        printWindow.focus();
+        printWindow.print();
+    }, 1000); // (使用1秒延迟确保CSS应用)
+}
+
+
+/**
+ * 13.19. [NEW] (打印辅助函数) 生成单个学生的诊断报告HTML
+ * (这是 drawItemStudentDetailTable 的 "返回字符串" 版本)
+ * @returns {string} - 该学生报告的 HTML
+ */
+function generateItemDetailReportHTML(student, studentLayer, subjectName, questionType, groupStats, recalculatedStats) {
+    // 1. 获取上下文
+    const studentName = student.name;
+    const typeText = (questionType === 'minor') ? ' (仅小题)' : (questionType === 'major') ? ' (仅大题)' : ' (全部题目)';
+
+    // 2. 获取层均分
+    const layerAvgRates = groupStats[studentLayer];
+    
+    // 3. 获取题目满分
+    const { minorStats, majorStats, minorQuestions, majorQuestions } = recalculatedStats;
+
+    if (!layerAvgRates) {
+        return `<h4>${studentName} - 无法计算 ${studentLayer} 的层级平均数据。</h4>`;
+    }
+
+    // 4. 遍历所有题目，计算偏差
+    const allQuestionDetails = [];
+    const processQuestion = (qName, stat, studentScore) => {
+        if (!stat) return;
+        const fullScore = stat.manualFullScore || stat.maxScore;
+        const studentRate = (fullScore > 0 && typeof studentScore === 'number') ? (studentScore / fullScore) : null;
+        const layerRate = layerAvgRates[qName];
+        const deviation = (studentRate !== null && typeof layerRate === 'number') ? (studentRate - layerRate) : null;
+        const kp = (G_ItemAnalysisConfig[subjectName] && G_ItemAnalysisConfig[subjectName][qName]) ? G_ItemAnalysisConfig[subjectName][qName].content : '';
+        
+        allQuestionDetails.push({
+            qName: qName,
+            kp: kp || 'N/A',
+            studentScore: studentScore ?? 'N/A',
+            fullScore: fullScore,
+            studentRate: studentRate,
+            layerRate: layerRate,
+            deviation: deviation
+        });
+    };
+    
+    if (questionType === 'all' || questionType === 'minor') {
+        (minorQuestions || []).forEach(qName => {
+            processQuestion(qName, minorStats[qName], student.minorScores[qName]);
+        });
+    }
+    if (questionType === 'all' || questionType === 'major') {
+        (majorQuestions || []).forEach(qName => {
+            processQuestion(qName, majorStats[qName], student.majorScores[qName]);
+        });
+    }
+
+    // 5. 排序 (打印时默认按“短板”排序)
+    allQuestionDetails.sort((a, b) => {
+        const valA = (a.deviation === null) ? Infinity : a.deviation;
+        const valB = (b.deviation === null) ? Infinity : b.deviation;
+        return valA - valB;
+    });
+
+    // 6. 渲染表格
+    let tableHtml = `
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>题号</th>
+                        <th>知识点</th>
+                        <th>学生得分</th>
+                        <th>满分</th>
+                        <th>学生得分率</th>
+                        <th>层均得分率</th>
+                        <th>得分率偏差</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${allQuestionDetails.map(q => `
+                        <tr>
+                            <td><strong>${q.qName}</strong></td>
+                            <td>${q.kp}</td>
+                            <td>${q.studentScore}</td>
+                            <td>${q.fullScore}</td>
+                            <td>${q.studentRate !== null ? (q.studentRate * 100).toFixed(1) + '%' : 'N/A'}</td>
+                            <td>${(q.layerRate !== null && q.layerRate !== undefined) ? (q.layerRate * 100).toFixed(1) + '%' : 'N/A'}</td>
+                            <td>
+                                ${(q.deviation !== null && q.deviation !== undefined)
+                                    ? (q.deviation > 0
+                                        ? `<strong class="progress">▲ ${(q.deviation * 100).toFixed(1)}%</strong>`
+                                        : (q.deviation < 0 
+                                            ? `<strong class="regress">▼ ${(q.deviation * 100).toFixed(1)}%</strong>`
+                                            : `0.0%`))
+                                    : 'N/A'
+                                }
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    // 7. 渲染页眉
+    let headerHtml = `
+        <div class="print-header" style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 20px;">
+            <h2>${subjectName} - 学生知识点诊断</h2>
+            <p style="text-align: left; margin: 5px 0;"><strong>学生:</strong> ${studentName} (${studentLayer}层)</p>
+            <p style="text-align: left; margin: 5px 0;"><strong>题目范围:</strong> ${typeText}</p>
+        </div>
+    `;
+    
+    return headerHtml + tableHtml;
 }
