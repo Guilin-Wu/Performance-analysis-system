@@ -5901,24 +5901,30 @@ function initializeStudentSearch(multiExamData) {
 
 /**
  * (重构) 11.6. (核心) 绘制多次考试的图表和表格
- * [!!] (已修改) 添加了复选框填充和数据筛选逻辑
+ * [!! 最终可用性修复 (V4) !!]
+ * - (修复) 明确图表职责：
+ * -   1. 分数图(图1): 响应筛选器，显示所有勾选科目的分数。
+ * -   2. 排名图(图2): 永远只显示“总分排名”，不再响应科目筛选。
+ * - (修复) 遵从用户要求，重新添加 "connectNulls: true"。
+ * - (修复) 更改图表标题，使职责更清晰。
  */
 function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCheckboxes = false) {
-    // [!!] (重构) X轴标签来自用户定义的 label
+    
+    // [!!] (不变) 过滤掉被隐藏的考试
     const visibleExamData = multiExamData.filter(e => !e.isHidden);
-
+    
+    // [!!] (不变) X轴标签
     const examNames = visibleExamData.map(e => e.label);
 
-    const rankSeries = [];
-    const scoreSeries = [];
-
+    // [!!] (不变) 数据容器
     const rankData = {
         classRank: [],
         gradeRank: []
     };
-    const subjectData = {};
+    const subjectData = {}; 
+    const subjectRankData = {}; 
 
-    // 1. (重构) 动态初始化科目列表 (基于所有考试的并集)
+    // 1. (不变) 动态初始化科目列表 (基于所有考试的并集)
     const allSubjects = new Set();
     visibleExamData.forEach(exam => {
         exam.students.forEach(s => {
@@ -5929,54 +5935,49 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
     const dynamicSubjects = Array.from(allSubjects);
     dynamicSubjects.forEach(subject => {
         subjectData[subject] = [];
+        subjectRankData[subject] = { classRank: [], gradeRank: [] }; 
     });
 
-    // 2. 遍历所有考试，填充数据 (不变)
+    // 2. (不变) 遍历所有考试，填充数据
     visibleExamData.forEach(exam => {
         const student = exam.students.find(s => String(s.id) === String(studentId));
 
         if (student) {
-            dynamicSubjects.forEach(subject => {
-                subjectData[subject].push(student.scores[subject] || null);
-            });
             rankData.classRank.push(student.rank || null);
             rankData.gradeRank.push(student.gradeRank || null);
-        } else {
+            
             dynamicSubjects.forEach(subject => {
-                subjectData[subject].push(null);
+                subjectData[subject].push(student.scores[subject] || null);
+                
+                const classRank = student.classRanks ? student.classRanks[subject] : null;
+                const gradeRank = student.gradeRanks ? student.gradeRanks[subject] : null;
+                subjectRankData[subject].classRank.push(classRank || null);
+                subjectRankData[subject].gradeRank.push(gradeRank || null);
             });
+        } else {
             rankData.classRank.push(null);
             rankData.gradeRank.push(null);
+            dynamicSubjects.forEach(subject => {
+                subjectData[subject].push(null);
+                subjectRankData[subject].classRank.push(null);
+                subjectRankData[subject].gradeRank.push(null);
+            });
         }
     });
 
-    // 3. 转换为 ECharts Series 格式 (用于图表)
+    // 3. (已修改) 转换为 ECharts Series 格式 (为分数图)
+    const scoreSeries = [];
     dynamicSubjects.forEach(subject => {
         scoreSeries.push({
             name: subject,
             type: 'line',
             data: subjectData[subject],
             smooth: true,
-            connectNulls: true
+            connectNulls: true // [!! 修复 !!] 遵从用户要求，连接空值
         });
     });
 
-    rankSeries.push({
-        name: '班级排名',
-        type: 'line',
-        data: rankData.classRank,
-        smooth: true,
-        connectNulls: true
-    });
-    rankSeries.push({
-        name: '年级排名',
-        type: 'line',
-        data: rankData.gradeRank,
-        smooth: true,
-        connectNulls: true
-    });
-
-    // 4. [!!] (新增) 填充复选框
+    // 4. (不变) 填充复选框
     const checkboxContainer = document.getElementById('multi-subject-checkboxes');
     if (checkboxContainer && forceRepopulateCheckboxes) {
         checkboxContainer.innerHTML = dynamicSubjects.map(subject => `
@@ -5987,22 +5988,42 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
         `).join('');
     }
 
-    // 5. [!!] (新增) 根据复选框筛选数据
+    // 5. (不变) 根据复选框筛选 *分数* 数据
     const checkedSubjects = new Set();
     if (checkboxContainer) {
         checkboxContainer.querySelectorAll('input:checked').forEach(cb => checkedSubjects.add(cb.value));
     }
-    // (如果一个都没勾选，也按空数组筛选)
     const filteredScoreSeries = scoreSeries.filter(series => checkedSubjects.has(series.name));
 
-    // 6. 绘图 ( [!!] 修改)
-    renderMultiExamLineChart('multi-exam-score-chart', '各科成绩曲线', examNames, filteredScoreSeries, false); // [!!] 使用过滤后的数据
-    renderMultiExamLineChart('multi-exam-rank-chart', '排名变化曲线', examNames, rankSeries, true); // (排名图不变)
+    // 6. [!! 核心逻辑修改 (V4) !!] 
+    // rankSeries 永远只使用总分数据
+    const rankSeries = [];
+    
+    rankSeries.push({
+        name: '班级排名 (总)', // [!!] 图例名称
+        type: 'line',
+        data: rankData.classRank,
+        smooth: true,
+        connectNulls: true // [!! 修复 !!] 遵从用户要求，连接空值
+    });
+    rankSeries.push({
+        name: '年级排名 (总)', // [!!] 图例名称
+        type: 'line',
+        data: rankData.gradeRank,
+        smooth: true,
+        connectNulls: true // [!! 修复 !!] 遵从用户要求，连接空值
+    });
+    // [!! 核心修改结束 !!]
 
-    // 7. [!!] (新增) 绘制详细数据表格 (不变)
+    // 7. [!! 核心修改 !!] 更改图表标题，使其更清晰
+    renderMultiExamLineChart('multi-exam-score-chart', '各科成绩曲线', examNames, filteredScoreSeries, false); 
+    renderMultiExamLineChart('multi-exam-rank-chart', '总分排名变化曲线', examNames, rankSeries, true); 
+
+    // 8. (不变) 绘制详细数据表格
     const tableContainer = document.getElementById('multi-student-table-container');
     if (!tableContainer) return;
 
+    // (表格仍然显示所有科目数据，方便核对)
     let tableHtml = `
         <h4>成绩详情表</h4>
         <div class="table-container" style="max-height: 400px;">
@@ -6010,9 +6031,11 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
                 <thead>
                     <tr>
                         <th>考试名称</th>
-                        <th>班级排名</th>
-                        <th>年级排名</th>
-                        ${dynamicSubjects.map(s => `<th>${s}</th>`).join('')}
+                        <th>班级排名 (总)</th>
+                        <th>年级排名 (总)</th>
+                        ${dynamicSubjects.map(s => `<th>${s} (分数)</th>`).join('')}
+                        ${dynamicSubjects.map(s => `<th>${s} (班排)</th>`).join('')}
+                        ${dynamicSubjects.map(s => `<th>${s} (年排)</th>`).join('')}
                     </tr>
                 </thead>
                 <tbody>
@@ -6023,6 +6046,12 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
                             <td>${rankData.gradeRank[index] || 'N/A'}</td>
                             ${dynamicSubjects.map(subject => `
                                 <td>${subjectData[subject][index] || 'N/A'}</td>
+                            `).join('')}
+                            ${dynamicSubjects.map(subject => `
+                                <td>${subjectRankData[subject].classRank[index] || 'N/A'}</td>
+                            `).join('')}
+                            ${dynamicSubjects.map(subject => `
+                                <td>${subjectRankData[subject].gradeRank[index] || 'N/A'}</td>
                             `).join('')}
                         </tr>
                     `).join('')}
