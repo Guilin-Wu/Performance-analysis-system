@@ -6394,11 +6394,15 @@ function renderItemAnalysis(container) {
             const itemData = await loadItemAnalysisExcel(file);
             G_ItemAnalysisData = itemData;
             localStorage.setItem('G_ItemAnalysisData', JSON.stringify(itemData));
+            // [!! 新增 !!] 保存文件名
+            localStorage.setItem('G_ItemAnalysisFileName', file.name);
+
             const subjects = Object.keys(itemData);
             if (subjects.length === 0) {
                 throw new Error("在文件中未找到任何包含有效数据的工作表。");
             }
-            statusLabel.innerText = `✅ 解析成功！共找到 ${subjects.length} 个科目。`;
+            // [!! 修改 !!] 显示文件名
+            statusLabel.innerText = `✅ 已加载: ${file.name} (共 ${subjects.length} 科)`;
             populateItemAnalysisUI(itemData);
         } catch (err) {
             console.error(err);
@@ -6515,7 +6519,7 @@ function renderItemAnalysis(container) {
         renderItemAnalysisCharts(); // [!!] 保存配置后重绘所有
     });
 
-    // 12. 模块加载时：尝试从缓存加载 (不变)
+    // 12. 模块加载时：尝试从缓存加载
     try {
         const storedConfig = localStorage.getItem('G_ItemAnalysisConfig');
         if (storedConfig) {
@@ -6523,10 +6527,20 @@ function renderItemAnalysis(container) {
         }
 
         const storedData = localStorage.getItem('G_ItemAnalysisData');
+        // [!! 新增 !!] 读取文件名
+        const storedFileName = localStorage.getItem('G_ItemAnalysisFileName');
+
         if (storedData) {
             const itemData = JSON.parse(storedData);
             G_ItemAnalysisData = itemData;
-            statusLabel.innerText = "✅ 已从浏览器缓存加载数据。";
+
+            // [!! 修改 !!] 如果有文件名，就显示文件名；否则显示默认提示
+            if (storedFileName) {
+                statusLabel.innerText = `✅ 已加载: ${storedFileName}`;
+            } else {
+                statusLabel.innerText = "✅ 已从浏览器缓存加载数据。";
+            }
+
             populateItemAnalysisUI(itemData);
         } else {
             statusLabel.innerText = "请导入小题分明细 Excel。";
@@ -9169,19 +9183,19 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
     const loadingDiv = document.getElementById('ai-loading');
     const contentDiv = document.getElementById('ai-content');
     const stopBtn = document.getElementById('ai-stop-btn');
-    
+
     // 1. 聊天区域初始化
     const chatHistoryDiv = document.getElementById('ai-chat-history');
     const inputArea = document.getElementById('ai-followup-input-area');
-    
+
     if (typeof marked === 'undefined') { alert("错误：marked.js 未加载！"); return; }
 
     // UI 初始化
     resultContainer.style.display = 'block';
-    contentDiv.innerHTML = ''; 
+    contentDiv.innerHTML = '';
     contentDiv.classList.add('typing-cursor');
     stopBtn.style.display = 'inline-block';
-    
+
     if (chatHistoryDiv) chatHistoryDiv.innerHTML = '';
     if (inputArea) inputArea.style.display = 'none';
 
@@ -9197,7 +9211,7 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
                 <p style="margin-bottom: 0; white-space: pre-wrap;">${prompt}</p>
             </div>
         `;
-        return; 
+        return;
     }
 
     // 动态 Loading
@@ -9220,7 +9234,7 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
 
     if (currentAIController) currentAIController.abort();
     currentAIController = new AbortController();
-    
+
     stopBtn.onclick = () => {
         if (currentAIController) {
             currentAIController.abort();
@@ -9234,8 +9248,8 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
 
     // 初始化对话历史
     G_AIChatHistory = [
-        {"role": "system", "content": "你是一名专业的中学数据分析师。请使用 Markdown 格式输出。数学公式请使用 standard LaTeX 格式。"},
-        {"role": "user", "content": prompt}
+        { "role": "system", "content": "你是一名专业的中学数据分析师。请使用 Markdown 格式输出。数学公式请使用 standard LaTeX 格式。" },
+        { "role": "user", "content": prompt }
     ];
 
     try {
@@ -9246,10 +9260,10 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: model, 
+                model: model,
                 messages: G_AIChatHistory,
                 temperature: 0.7,
-                stream: true 
+                stream: true
             }),
             signal: currentAIController.signal
         });
@@ -9266,7 +9280,7 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
-        let fullMarkdown = ""; 
+        let fullMarkdown = "";
 
         while (true) {
             const { done, value } = await reader.read();
@@ -9274,17 +9288,17 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
 
             const chunk = decoder.decode(value, { stream: true });
             const lines = chunk.split('\n');
-            
+
             for (const line of lines) {
                 const trimmedLine = line.trim();
                 if (!trimmedLine || trimmedLine === 'data: [DONE]') continue;
-                
+
                 if (trimmedLine.startsWith('data: ')) {
                     try {
                         const jsonStr = trimmedLine.slice(6);
                         const json = JSON.parse(jsonStr);
                         const content = json.choices[0].delta.content || "";
-                        
+
                         fullMarkdown += content;
 
                         requestAnimationFrame(() => {
@@ -9300,7 +9314,7 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
                             // 2. 提取保护 (匹配 $$...$$ 和 $...$)
                             const mathSegments = [];
                             const protectedMarkdown = processedMd.replace(
-                                /(\$\$[\s\S]*?\$\$|\$((?:\\.|[^\\$])*?)\$)/g, 
+                                /(\$\$[\s\S]*?\$\$|\$((?:\\.|[^\\$])*?)\$)/g,
                                 (match) => {
                                     const placeholder = `MATHBLOCK${mathSegments.length}END`;
                                     mathSegments.push(match);
@@ -9322,11 +9336,11 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
                             if (window.renderMathInElement) {
                                 renderMathInElement(contentDiv, {
                                     delimiters: [
-                                        {left: "$$", right: "$$", display: true},
-                                        {left: "$", right: "$", display: false}
+                                        { left: "$$", right: "$$", display: true },
+                                        { left: "$", right: "$", display: false }
                                     ],
                                     throwOnError: false,
-                                    macros: { "\\ce": "\\href{https://mhchem.github.io/}" } 
+                                    macros: { "\\ce": "\\href{https://mhchem.github.io/}" }
                                 });
                             }
                         });
@@ -9335,8 +9349,8 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
                 }
             }
         }
-        
-        G_AIChatHistory.push({"role": "assistant", "content": fullMarkdown});
+
+        G_AIChatHistory.push({ "role": "assistant", "content": fullMarkdown });
         if (inputArea) inputArea.style.display = 'flex';
 
     } catch (err) {
