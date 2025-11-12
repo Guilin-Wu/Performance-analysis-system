@@ -9177,41 +9177,42 @@ function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高
     return prompt;
 }
 
-// 3. 调用 DeepSeek API (最终修正版 V3：完美修复公式渲染)
+// 3. 调用 DeepSeek API (最终完美版 V4：全格式兼容 + 深度保护)
 async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount, grade, targetSubject) {
     const resultContainer = document.getElementById('ai-result-container');
     const loadingDiv = document.getElementById('ai-loading');
     const contentDiv = document.getElementById('ai-content');
     const stopBtn = document.getElementById('ai-stop-btn');
-
-    // 1. 聊天区域初始化
-    const chatHistoryDiv = document.getElementById('ai-chat-history');
-    const inputArea = document.getElementById('ai-followup-input-area');
-
+    
     if (typeof marked === 'undefined') { alert("错误：marked.js 未加载！"); return; }
 
     // UI 初始化
     resultContainer.style.display = 'block';
-    contentDiv.innerHTML = '';
+    contentDiv.innerHTML = ''; 
     contentDiv.classList.add('typing-cursor');
     stopBtn.style.display = 'inline-block';
-
+    
+    // 清理旧聊天
+    const chatHistoryDiv = document.getElementById('ai-chat-history');
+    const inputArea = document.getElementById('ai-followup-input-area');
     if (chatHistoryDiv) chatHistoryDiv.innerHTML = '';
     if (inputArea) inputArea.style.display = 'none';
 
-    // 2. 生成 Prompt (带错误拦截)
+    // 生成 Prompt
     const prompt = generateAIPrompt(studentId, studentName, mode, qCount, grade, targetSubject);
 
+    // 拦截错误
     if (prompt.startsWith('错误：') || prompt.startsWith('系统错误：')) {
         contentDiv.classList.remove('typing-cursor');
         stopBtn.style.display = 'none';
+        loadingDiv.style.display = 'none';
         contentDiv.innerHTML = `
             <div style="padding: 20px; background-color: #fff5f5; border-left: 5px solid #dc3545; border-radius: 4px; color: #721c24;">
                 <h3 style="margin-top: 0; color: #dc3545;">⚠️ 无法进行分析</h3>
                 <p style="margin-bottom: 0; white-space: pre-wrap;">${prompt}</p>
             </div>
         `;
-        return;
+        return; 
     }
 
     // 动态 Loading
@@ -9222,19 +9223,17 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
     `;
     loadingDiv.style.display = 'block';
 
+    // 进度条
     const progressBar = document.getElementById('ai-progress-bar');
     let progress = 5;
     progressBar.style.width = `${progress}%`;
     const progressInterval = setInterval(() => {
-        if (progress < 90) {
-            progress += Math.random() * 3;
-            progressBar.style.width = `${progress}%`;
-        }
+        if (progress < 90) { progress += Math.random() * 3; progressBar.style.width = `${progress}%`; }
     }, 200);
 
     if (currentAIController) currentAIController.abort();
     currentAIController = new AbortController();
-
+    
     stopBtn.onclick = () => {
         if (currentAIController) {
             currentAIController.abort();
@@ -9246,10 +9245,12 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
         }
     };
 
-    // 初始化对话历史
+    // 对话历史
+    const temp = (model === 'deepseek-reasoner') ? 0.6 : 0.7;
     G_AIChatHistory = [
-        { "role": "system", "content": "你是一名专业的中学数据分析师。请使用 Markdown 格式输出。数学公式请使用 standard LaTeX 格式。" },
-        { "role": "user", "content": prompt }
+        // [!!] 提示词微调：允许 AI 使用它习惯的任意公式格式，我们会自动处理
+        {"role": "system", "content": "你是一名专业的中学数据分析师。请使用 Markdown 格式输出。对于数学公式，你可以自由使用 $...$ 或 \\(...\\) 格式。"},
+        {"role": "user", "content": prompt}
     ];
 
     try {
@@ -9260,10 +9261,10 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: model,
+                model: model, 
                 messages: G_AIChatHistory,
-                temperature: 0.7,
-                stream: true
+                temperature: temp,
+                stream: true 
             }),
             signal: currentAIController.signal
         });
@@ -9280,7 +9281,16 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
-        let fullMarkdown = "";
+        
+        let fullReasoning = "";
+        let fullContent = "";
+        
+        const reasoningTemplate = (text) => `
+            <div style="border-left: 3px solid #ccc; background: #f9f9f9; padding: 10px 15px; margin-bottom: 15px; color: #666; font-size: 0.9em; font-style: italic;">
+                <div style="font-weight:bold; margin-bottom:5px;">🤔 深度思考过程:</div>
+                <div style="white-space: pre-wrap;">${text}</div>
+            </div>
+        `;
 
         while (true) {
             const { done, value } = await reader.read();
@@ -9288,69 +9298,72 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
 
             const chunk = decoder.decode(value, { stream: true });
             const lines = chunk.split('\n');
-
+            
             for (const line of lines) {
                 const trimmedLine = line.trim();
                 if (!trimmedLine || trimmedLine === 'data: [DONE]') continue;
-
+                
                 if (trimmedLine.startsWith('data: ')) {
                     try {
-                        const jsonStr = trimmedLine.slice(6);
-                        const json = JSON.parse(jsonStr);
-                        const content = json.choices[0].delta.content || "";
+                        const json = JSON.parse(trimmedLine.slice(6));
+                        const delta = json.choices[0].delta;
 
-                        fullMarkdown += content;
+                        if (delta.reasoning_content) {
+                            fullReasoning += delta.reasoning_content;
+                            contentDiv.innerHTML = reasoningTemplate(fullReasoning) + (fullContent ? marked.parse(fullContent) : "");
+                        }
+                        
+                        if (delta.content) {
+                            fullContent += delta.content;
+                            
+                            requestAnimationFrame(() => {
+                                // [!! 核心升级 !!] 
+                                // 使用更强大的正则，同时匹配 $..$, $$..$$, \(..\), \[..\]
+                                // 并且使用安全的 MATHBLOCK 占位符
+                                const mathSegments = [];
+                                const protectedMarkdown = fullContent.replace(
+                                    /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$((?:\\.|[^\\$])*?)(?<!\\)\$)/g, 
+                                    (match) => {
+                                        const placeholder = `MATHBLOCK${mathSegments.length}END`;
+                                        mathSegments.push(match);
+                                        return placeholder;
+                                    }
+                                );
 
-                        requestAnimationFrame(() => {
-                            // [!! 核心修复 !!] 渲染前预处理
-                            // 1. 标准化公式格式：把 \(..\) 变成 $..$，把 \[..\] 变成 $$..$$
-                            // 这样能避免 marked.js 在列表中解析错误
-                            let processedMd = fullMarkdown
-                                .replace(/\\\[/g, '$$$')  // \[ -> $$
-                                .replace(/\\\]/g, '$$$')  // \] -> $$
-                                .replace(/\\\(/g, '$')    // \( -> $
-                                .replace(/\\\)/g, '$');   // \) -> $
+                                // Markdown 渲染
+                                let html = marked.parse(protectedMarkdown);
 
-                            // 2. 提取保护 (匹配 $$...$$ 和 $...$)
-                            const mathSegments = [];
-                            const protectedMarkdown = processedMd.replace(
-                                /(\$\$[\s\S]*?\$\$|\$((?:\\.|[^\\$])*?)\$)/g,
-                                (match) => {
-                                    const placeholder = `MATHBLOCK${mathSegments.length}END`;
-                                    mathSegments.push(match);
-                                    return placeholder;
-                                }
-                            );
-
-                            // 3. Markdown 渲染
-                            let html = marked.parse(protectedMarkdown);
-
-                            // 4. 还原公式
-                            mathSegments.forEach((segment, index) => {
-                                html = html.replace(`MATHBLOCK${index}END`, () => segment);
-                            });
-
-                            contentDiv.innerHTML = html;
-
-                            // 5. KaTeX 渲染 (同时支持 $ 和 $$)
-                            if (window.renderMathInElement) {
-                                renderMathInElement(contentDiv, {
-                                    delimiters: [
-                                        { left: "$$", right: "$$", display: true },
-                                        { left: "$", right: "$", display: false }
-                                    ],
-                                    throwOnError: false,
-                                    macros: { "\\ce": "\\href{https://mhchem.github.io/}" }
+                                // 还原公式
+                                mathSegments.forEach((segment, index) => {
+                                    html = html.replace(`MATHBLOCK${index}END`, () => segment);
                                 });
-                            }
-                        });
+
+                                // 组合 HTML
+                                const finalHtml = (fullReasoning ? reasoningTemplate(fullReasoning) : "") + html;
+                                contentDiv.innerHTML = finalHtml;
+
+                                // KaTeX 渲染 (配置支持所有格式)
+                                if (window.renderMathInElement) {
+                                    renderMathInElement(contentDiv, {
+                                        delimiters: [
+                                            {left: "$$", right: "$$", display: true},
+                                            {left: "\\[", right: "\\]", display: true},
+                                            {left: "$", right: "$", display: false},
+                                            {left: "\\(", right: "\\)", display: false} // 支持 \( ... \)
+                                        ],
+                                        throwOnError: false,
+                                        macros: { "\\ce": "\\href{https://mhchem.github.io/}" } 
+                                    });
+                                }
+                            });
+                        }
 
                     } catch (e) { }
                 }
             }
         }
-
-        G_AIChatHistory.push({ "role": "assistant", "content": fullMarkdown });
+        
+        G_AIChatHistory.push({"role": "assistant", "content": fullContent});
         if (inputArea) inputArea.style.display = 'flex';
 
     } catch (err) {
