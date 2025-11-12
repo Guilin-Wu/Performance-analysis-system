@@ -2667,13 +2667,14 @@ function renderTrendDistribution(container, currentData, compareData, currentSta
 }
 
 /**
- * (新增) 9.11. 模块十二：多次考试分析
- * [!!] (重构) 新增“导入/导出 JSON 备份”功能
- * @param {Object} container - HTML 容器
+ * (重构) 9.11. 模块十二：多次考试分析
+ * [!! 完整修复版 !!]
+ * - 包含了图表3的 HTML 结构。
+ * - 包含了下拉框 (multi-rank-type-select) 的事件监听器。
  */
 function renderMultiExam(container) {
 
-    // 1. 渲染模块独有的HTML (包含独立的文件上传器)
+    // 1. 渲染模块 HTML
     container.innerHTML = `
         <h2>模块十二：多次考试分析</h2>
         <p style="margin-top: -20px; margin-bottom: 20px; color: var(--text-muted);">
@@ -2724,6 +2725,7 @@ function renderMultiExam(container) {
         <div id="multi-student-report" style="display: none;">
             <div class="main-card-wrapper" style="margin-bottom: 20px;">
                 <h4 id="multi-student-name-title">学生报表</h4>
+                
                 <div id="multi-subject-filter-container">
                     <div class="main-card-wrapper" style="padding: 15px; margin-top: 10px; box-shadow: var(--shadow-sm);">
                         <h5>各科成绩曲线 (图1) - 科目筛选</h5>
@@ -2735,10 +2737,42 @@ function renderMultiExam(container) {
                         </div>
                     </div>
                 </div>
+
                 <div class="dashboard-chart-grid-1x1" style="margin-top: 20px;">
-                    <div class="chart-container" id="multi-exam-score-chart" style="height: 400px;"></div>
-                    <div class="chart-container" id="multi-exam-rank-chart" style="height: 400px;"></div>
+                    
+                    <div class="main-card-wrapper" style="padding: 15px; margin-bottom: 0; border-bottom: none; border-radius: 8px 8px 0 0;">
+                        <h4 style="margin: 0;">1. 各科分数变化曲线</h4>
+                        <p style="margin: 5px 0 0 0; font-size: 0.8em; color: var(--text-muted);">* 受上方“科目复选框”控制</p>
+                    </div>
+                    <div class="chart-container" id="multi-exam-score-chart" style="height: 350px; margin-top: 0; border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 8px 8px; background: #fff;"></div>
+
+                    <div class="main-card-wrapper" style="padding: 15px; margin-top: 20px; margin-bottom: 0; border-bottom: none; border-radius: 8px 8px 0 0;">
+                        <h4 style="margin: 0;">2. 总分排名变化曲线</h4>
+                        <p style="margin: 5px 0 0 0; font-size: 0.8em; color: var(--text-muted);">* 固定显示总分排名，不受筛选影响</p>
+                    </div>
+                    <div class="chart-container" id="multi-exam-rank-chart" style="height: 350px; margin-top: 0; border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 8px 8px; background: #fff;"></div>
+
+                    <div class="main-card-wrapper" style="padding: 15px; margin-top: 20px; margin-bottom: 0; border-bottom: none; border-radius: 8px 8px 0 0;">
+                        <div class="controls-bar" style="background: transparent; box-shadow: none; padding: 0; margin: 0; justify-content: space-between; flex-wrap: wrap;">
+                            <h4 style="margin: 0;">3. 各科排名变化曲线</h4>
+                            
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <label for="multi-rank-type-select" style="margin: 0; font-size: 0.9em;">显示类型:</label>
+                                <select id="multi-rank-type-select" class="sidebar-select" style="width: auto; padding: 6px 12px;">
+                                    <option value="both">同时显示 (班排 + 年排)</option>
+                                    <option value="class">仅看班级排名</option>
+                                    <option value="grade">仅看年级排名</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p style="margin: 5px 0 0 0; font-size: 0.8em; color: var(--text-muted);">
+                            * 受上方“科目复选框” 和 此处“显示类型” 共同控制
+                        </p>
+                    </div>
+                    <div class="chart-container" id="multi-exam-subject-rank-chart" style="height: 350px; margin-top: 0; border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 8px 8px; background: #fff;"></div>
+
                 </div>
+
                 <div id="multi-student-table-container" class="multi-exam-table-container">
                 </div>
             </div>
@@ -2750,19 +2784,16 @@ function renderMultiExam(container) {
     const statusLabel = document.getElementById('multi-file-status');
     const listContainer = document.getElementById('multi-exam-list');
     const clearBtn = document.getElementById('multi-clear-all');
-
-    // [!!] (新增) 绑定导入/导出按钮
     const exportBtn = document.getElementById('multi-export-all');
     const jsonUploader = document.getElementById('multi-json-uploader');
 
-
-    // (上传事件 - 不变)
+    // (上传事件)
     multiUploader.addEventListener('change', async (event) => {
         const files = event.target.files;
         if (!files || files.length === 0) return;
 
         statusLabel.innerText = `🔄 正在解析 ${files.length} 个文件...`;
-        let loadedData = loadMultiExamData(); // (获取现有数据)
+        let loadedData = loadMultiExamData();
 
         try {
             for (const file of files) {
@@ -2773,7 +2804,8 @@ function renderMultiExam(container) {
                     id: Date.now() + Math.random(),
                     originalName: file.name,
                     label: file.name.replace(/\.xlsx|\.xls|\.csv/g, ''),
-                    students: rankedData
+                    students: rankedData,
+                    isHidden: false // 默认不隐藏
                 });
             }
 
@@ -2788,7 +2820,7 @@ function renderMultiExam(container) {
         }
     });
 
-    // (列表交互事件 - 不变)
+    // (列表交互事件: 重命名)
     listContainer.addEventListener('input', (e) => {
         if (e.target && e.target.dataset.role === 'label') {
             const id = e.target.closest('li').dataset.id;
@@ -2803,8 +2835,9 @@ function renderMultiExam(container) {
             }
         }
     });
+
+    // (列表交互事件: 按钮点击)
     listContainer.addEventListener('click', (e) => {
-        // ... (此函数内部不变) ...
         if (!e.target) return;
         const button = e.target.closest('button');
         if (!button) return;
@@ -2817,27 +2850,19 @@ function renderMultiExam(container) {
         if (index === -1) return;
 
         if (role === 'toggle-hide') {
-            // [!! 新增 !!]
-            data[index].isHidden = !data[index].isHidden; // 切换状态
-
-            // (隐藏学生报告，因为数据源已更改)
+            data[index].isHidden = !data[index].isHidden;
             document.getElementById('multi-student-report').style.display = 'none';
-
         } else if (role === 'delete') {
-
-            // [!! 新增 !!]
-            const itemLabel = data[index].label; // 获取考试名称
+            const itemLabel = data[index].label;
             if (confirm(`您确定要删除 "${itemLabel}" 这次考试吗？\n此操作不可撤销。`)) {
-                // 只有用户点击“确定”时，才执行删除
                 data.splice(index, 1);
             } else {
-                // 如果用户点击“取消”，则退出函数，不执行任何操作
                 return;
             }
         } else if (role === 'up' && index > 0) {
-            [data[index - 1], data[index]] = [data[index], data[index - 1]]; // (交换)
+            [data[index - 1], data[index]] = [data[index], data[index - 1]];
         } else if (role === 'down' && index < data.length - 1) {
-            [data[index + 1], data[index]] = [data[index], data[index + 1]]; // (交换)
+            [data[index + 1], data[index]] = [data[index], data[index + 1]];
         }
 
         saveMultiExamData(data);
@@ -2846,7 +2871,7 @@ function renderMultiExam(container) {
         document.getElementById('multi-student-report').style.display = 'none';
     });
 
-    // (清空事件 - 不变)
+    // (清空事件)
     clearBtn.addEventListener('click', () => {
         if (confirm('您确定要清除所有已保存的“多次考试”数据吗？此操作不可撤销。')) {
             saveMultiExamData([]);
@@ -2856,7 +2881,7 @@ function renderMultiExam(container) {
         }
     });
 
-    // [!!] (新增) 导出备份 (Export JSON)
+    // (导出备份)
     exportBtn.addEventListener('click', () => {
         const data = loadMultiExamData();
         if (data.length === 0) {
@@ -2867,7 +2892,6 @@ function renderMultiExam(container) {
             const jsonString = JSON.stringify(data);
             const blob = new Blob([jsonString], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
-
             const a = document.createElement('a');
             a.href = url;
             a.download = `成绩分析系统_多次考试备份_${new Date().toISOString().split('T')[0]}.json`;
@@ -2875,7 +2899,6 @@ function renderMultiExam(container) {
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-
             statusLabel.innerText = `✅ 成功导出 ${data.length} 条考试数据。`;
         } catch (err) {
             statusLabel.innerText = `❌ 导出失败: ${err.message}`;
@@ -2883,23 +2906,18 @@ function renderMultiExam(container) {
         }
     });
 
-    // [!!] (新增) 导入备份 (Import JSON)
+    // (导入备份)
     jsonUploader.addEventListener('change', (event) => {
         const file = event.target.files[0];
         if (!file) return;
-
         statusLabel.innerText = `🔄 正在读取备份文件...`;
         const reader = new FileReader();
-
         reader.onload = (e) => {
             try {
                 const importedData = JSON.parse(e.target.result);
-
-                // (简单校验)
                 if (!Array.isArray(importedData) || (importedData.length > 0 && !importedData[0].students)) {
                     throw new Error('文件格式不正确，不是有效的备份文件。');
                 }
-
                 if (confirm(`您确定要用此文件中的 ${importedData.length} 条数据，覆盖当前所有“多次考试”数据吗？`)) {
                     saveMultiExamData(importedData);
                     renderMultiExamList(importedData);
@@ -2909,28 +2927,81 @@ function renderMultiExam(container) {
                 } else {
                     statusLabel.innerText = '导入操作已取消。';
                 }
-
             } catch (err) {
                 statusLabel.innerText = `❌ 导入失败: ${err.message}`;
                 console.error(err);
             } finally {
-                jsonUploader.value = null; // (清空 input，以便下次还能选择同名文件)
+                jsonUploader.value = null;
             }
         };
-
         reader.onerror = () => {
             statusLabel.innerText = '❌ 文件读取失败。';
             jsonUploader.value = null;
         };
-
         reader.readAsText(file);
     });
 
-    // 3. (核心) 页面加载时, 立即加载数据并渲染 (不变)
+    // 3. 初始化数据
     const initialData = loadMultiExamData();
     renderMultiExamList(initialData);
     initializeStudentSearch(initialData);
+
+    // ------------------------------------------------------------------
+    // [!! 核心修复 !!] 在这里绑定“排名类型”和“复选框”的监听器
+    // ------------------------------------------------------------------
+
+    // (监听: 排名类型下拉框)
+    const rankTypeSelect = document.getElementById('multi-rank-type-select');
+    if (rankTypeSelect) {
+        rankTypeSelect.addEventListener('change', () => {
+            const reportContainer = document.getElementById('multi-student-report');
+            const currentStudentId = reportContainer.dataset.studentId;
+            if (currentStudentId) {
+                drawMultiExamChartsAndTable(currentStudentId, loadMultiExamData(), false);
+            }
+        });
+    }
+
+    // (监听: 复选框容器)
+    const checkboxContainer = document.getElementById('multi-subject-checkboxes');
+    if (checkboxContainer) {
+        checkboxContainer.addEventListener('change', () => {
+            const reportContainer = document.getElementById('multi-student-report');
+            const currentStudentId = reportContainer.dataset.studentId;
+            if (currentStudentId) {
+                drawMultiExamChartsAndTable(currentStudentId, loadMultiExamData(), false);
+            }
+        });
+    }
+    
+    // (监听: 全选)
+    const selectAllBtn = document.getElementById('multi-subject-all');
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', () => {
+            if (checkboxContainer) {
+                checkboxContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+                const reportContainer = document.getElementById('multi-student-report');
+                const currentStudentId = reportContainer.dataset.studentId;
+                if (currentStudentId) drawMultiExamChartsAndTable(currentStudentId, loadMultiExamData(), false);
+            }
+        });
+    }
+
+    // (监听: 全不选)
+    const selectNoneBtn = document.getElementById('multi-subject-none');
+    if (selectNoneBtn) {
+        selectNoneBtn.addEventListener('click', () => {
+            if (checkboxContainer) {
+                checkboxContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+                const reportContainer = document.getElementById('multi-student-report');
+                const currentStudentId = reportContainer.dataset.studentId;
+                if (currentStudentId) drawMultiExamChartsAndTable(currentStudentId, loadMultiExamData(), false);
+            }
+        });
+    }
 }
+
+
 /**
  * (新增) 10.15. 渲染学科关联热力图 (Heatmap)
  * [!!] (已修复)
@@ -5909,30 +5980,21 @@ function initializeStudentSearch(multiExamData) {
 
 /**
  * (重构) 11.6. (核心) 绘制多次考试的图表和表格
- * [!! 最终可用性修复 (V4) !!]
- * - (修复) 明确图表职责：
- * -   1. 分数图(图1): 响应筛选器，显示所有勾选科目的分数。
- * -   2. 排名图(图2): 永远只显示“总分排名”，不再响应科目筛选。
- * - (修复) 遵从用户要求，重新添加 "connectNulls: true"。
- * - (修复) 更改图表标题，使职责更清晰。
+ * [!! 最终版 V9 (函数分离架构) !!]
+ * - 图表1 & 2: 继续由本函数处理。
+ * - 图表3: 委托给新函数 `renderSubjectRankChart` 处理。
  */
 function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCheckboxes = false) {
-
-    // [!!] (不变) 过滤掉被隐藏的考试
+    
+    // 1. 过滤与准备数据 (不变)
     const visibleExamData = multiExamData.filter(e => !e.isHidden);
-
-    // [!!] (不变) X轴标签
     const examNames = visibleExamData.map(e => e.label);
 
-    // [!!] (不变) 数据容器
-    const rankData = {
-        classRank: [],
-        gradeRank: []
-    };
-    const subjectData = {};
-    const subjectRankData = {};
+    const rankData = { classRank: [], gradeRank: [] };
+    const subjectData = {}; 
+    // subjectRankData 在这里不再需要用于绘图，但表格仍需使用
+    const subjectRankData = {}; 
 
-    // 1. (不变) 动态初始化科目列表 (基于所有考试的并集)
     const allSubjects = new Set();
     visibleExamData.forEach(exam => {
         exam.students.forEach(s => {
@@ -5943,20 +6005,21 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
     const dynamicSubjects = Array.from(allSubjects);
     dynamicSubjects.forEach(subject => {
         subjectData[subject] = [];
-        subjectRankData[subject] = { classRank: [], gradeRank: [] };
+        subjectRankData[subject] = { classRank: [], gradeRank: [] }; 
     });
 
-    // 2. (不变) 遍历所有考试，填充数据
+    let studentNameForPrint = "学生";
+
+    // 2. 填充数据 (不变)
     visibleExamData.forEach(exam => {
         const student = exam.students.find(s => String(s.id) === String(studentId));
-
         if (student) {
+            if (studentNameForPrint === "学生") studentNameForPrint = student.name;
+
             rankData.classRank.push(student.rank || null);
             rankData.gradeRank.push(student.gradeRank || null);
-
             dynamicSubjects.forEach(subject => {
                 subjectData[subject].push(student.scores[subject] || null);
-
                 const classRank = student.classRanks ? student.classRanks[subject] : null;
                 const gradeRank = student.gradeRanks ? student.gradeRanks[subject] : null;
                 subjectRankData[subject].classRank.push(classRank || null);
@@ -5973,7 +6036,7 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
         }
     });
 
-    // 3. (已修改) 转换为 ECharts Series 格式 (为分数图)
+    // 3. [图表1 数据] 分数 (不变)
     const scoreSeries = [];
     dynamicSubjects.forEach(subject => {
         scoreSeries.push({
@@ -5981,11 +6044,11 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
             type: 'line',
             data: subjectData[subject],
             smooth: true,
-            connectNulls: true // [!! 修复 !!] 遵从用户要求，连接空值
+            connectNulls: true
         });
     });
 
-    // 4. (不变) 填充复选框
+    // 4. 复选框逻辑 (不变)
     const checkboxContainer = document.getElementById('multi-subject-checkboxes');
     if (checkboxContainer && forceRepopulateCheckboxes) {
         checkboxContainer.innerHTML = dynamicSubjects.map(subject => `
@@ -5995,46 +6058,59 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
             </div>
         `).join('');
     }
-
-    // 5. (不变) 根据复选框筛选 *分数* 数据
     const checkedSubjects = new Set();
     if (checkboxContainer) {
         checkboxContainer.querySelectorAll('input:checked').forEach(cb => checkedSubjects.add(cb.value));
     }
     const filteredScoreSeries = scoreSeries.filter(series => checkedSubjects.has(series.name));
 
-    // 6. [!! 核心逻辑修改 (V4) !!] 
-    // rankSeries 永远只使用总分数据
-    const rankSeries = [];
-
-    rankSeries.push({
-        name: '班级排名 (总)', // [!!] 图例名称
+    // 5. [图表2 数据] 总分排名 (固定 - 不变)
+    const totalRankSeries = [];
+    totalRankSeries.push({
+        name: '班级排名 (总)',
         type: 'line',
         data: rankData.classRank,
         smooth: true,
-        connectNulls: true // [!! 修复 !!] 遵从用户要求，连接空值
+        connectNulls: true
     });
-    rankSeries.push({
-        name: '年级排名 (总)', // [!!] 图例名称
+    totalRankSeries.push({
+        name: '年级排名 (总)',
         type: 'line',
         data: rankData.gradeRank,
         smooth: true,
-        connectNulls: true // [!! 修复 !!] 遵从用户要求，连接空值
+        connectNulls: true
     });
-    // [!! 核心修改结束 !!]
 
-    // 7. [!! 核心修改 !!] 更改图表标题，使其更清晰
-    renderMultiExamLineChart('multi-exam-score-chart', '各科成绩曲线', examNames, filteredScoreSeries, false);
-    renderMultiExamLineChart('multi-exam-rank-chart', '总分排名变化曲线', examNames, rankSeries, true);
+    // 6. 渲染 图表1 & 图表2 (不变)
+    renderMultiExamLineChart('multi-exam-score-chart', '', examNames, filteredScoreSeries, false); 
+    renderMultiExamLineChart('multi-exam-rank-chart', '', examNames, totalRankSeries, true); 
+    
+    // 7. [!! 核心修改 !!] 渲染 图表3 (调用新函数)
+    const rankTypeSelect = document.getElementById('multi-rank-type-select');
+    const rankType = rankTypeSelect ? rankTypeSelect.value : 'both';
+    
+    // 直接调用新函数来处理复杂的排名逻辑
+    renderSubjectRankChart(
+        'multi-exam-subject-rank-chart', // 容器ID
+        examNames,                       // X轴标签
+        visibleExamData,                 // 完整数据源
+        studentId,                       // 当前学生ID
+        checkedSubjects,                 // 勾选的科目
+        rankType                         // 显示类型 (class/grade/both)
+    );
 
-    // 8. (不变) 绘制详细数据表格
+    // 8. 绘制表格 (含打印按钮) (不变)
     const tableContainer = document.getElementById('multi-student-table-container');
     if (!tableContainer) return;
 
-    // (表格仍然显示所有科目数据，方便核对)
     let tableHtml = `
-        <h4>成绩详情表</h4>
-        <div class="table-container" style="max-height: 400px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-top: 20px; border-top: 1px solid var(--border-color);">
+            <h4 style="margin: 0;">成绩详情表</h4>
+            <button id="multi-print-table-btn" class="sidebar-button" style="font-size: 0.9em; padding: 6px 12px; background-color: var(--color-blue);">
+                🖨️ 打印表格
+            </button>
+        </div>
+        <div class="table-container" id="multi-print-table-content" style="max-height: 400px;">
             <table>
                 <thead>
                     <tr>
@@ -6068,6 +6144,14 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
         </div>
     `;
     tableContainer.innerHTML = tableHtml;
+
+    const printBtn = document.getElementById('multi-print-table-btn');
+    if (printBtn) {
+        printBtn.addEventListener('click', () => {
+            const contentToPrint = document.getElementById('multi-print-table-content').innerHTML;
+            startMultiTablePrintJob(studentNameForPrint, contentToPrint);
+        });
+    }
 }
 
 /**
@@ -8639,4 +8723,119 @@ function generateItemDetailReportHTML(student, studentLayer, subjectName, questi
     `;
 
     return headerHtml + tableHtml;
+}
+
+/**
+ * 11.8. [NEW] 启动“多次考试-成绩详情表”的打印作业
+ */
+function startMultiTablePrintJob(studentName, tableHtml) {
+    const html = `
+        <html>
+        <head>
+            <title>${studentName} - 历次考试成绩详情</title>
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                    margin: 2cm;
+                }
+                h2 { text-align: center; margin-bottom: 20px; }
+                
+                /* 基础表格样式 (复用 style.css) */
+                table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+                th, td { 
+                    border: 1px solid #999; 
+                    padding: 8px; 
+                    text-align: center; 
+                }
+                th { background-color: #f0f0f0; font-weight: bold; }
+                
+                /* 打印设置 */
+                @media print {
+                    @page { size: A4 landscape; } /* 横向打印，因为列很多 */
+                    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                }
+            </style>
+        </head>
+        <body>
+            <h2>${studentName} - 历次考试成绩详情表</h2>
+            ${tableHtml}
+        </body>
+        </html>
+    `;
+
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(html);
+    printWindow.document.close();
+
+    setTimeout(() => {
+        printWindow.focus();
+        printWindow.print();
+    }, 1000);
+}
+
+
+/**
+ * 11.9. [NEW] 专门负责渲染“图表3：各科排名变化曲线”
+ * - (核心修复) 数据清洗：只有当学生在某次考试中有有效分数时，才显示排名。
+ * - (解决痛点) 即使后台计算了缺考排位，这里也会将其过滤为 null，防止图表乱连线。
+ */
+function renderSubjectRankChart(containerId, examNames, visibleExamData, studentId, checkedSubjects, rankType) {
+    
+    const series = [];
+
+    // 遍历每一个被勾选的科目
+    checkedSubjects.forEach(subject => {
+        const classRankData = [];
+        const gradeRankData = [];
+
+        // 遍历每一次考试
+        visibleExamData.forEach(exam => {
+            const student = exam.students.find(s => String(s.id) === String(studentId));
+            
+            let validClassRank = null;
+            let validGradeRank = null;
+
+            // [!! 核心逻辑 !!] 
+            // 只有当学生存在，且该科目有有效分数时，才采纳排名
+            if (student) {
+                const score = student.scores[subject];
+                // 只有分数存在且是数字时
+                if (typeof score === 'number' && !isNaN(score)) {
+                    // 安全读取排名
+                    if (student.classRanks && student.classRanks[subject]) {
+                        validClassRank = student.classRanks[subject];
+                    }
+                    if (student.gradeRanks && student.gradeRanks[subject]) {
+                        validGradeRank = student.gradeRanks[subject];
+                    }
+                }
+            }
+
+            classRankData.push(validClassRank);
+            gradeRankData.push(validGradeRank);
+        });
+
+        // 根据下拉框选择，决定添加哪些线条
+        if (rankType === 'both' || rankType === 'class') {
+            series.push({
+                name: `${subject}-班排`,
+                type: 'line',
+                data: classRankData,
+                smooth: true,
+                connectNulls: true // [!!] 跳过空值连接 (根据你的需求)
+            });
+        }
+        if (rankType === 'both' || rankType === 'grade') {
+            series.push({
+                name: `${subject}-年排`,
+                type: 'line',
+                data: gradeRankData,
+                smooth: true,
+                connectNulls: true // [!!] 跳过空值连接
+            });
+        }
+    });
+
+    // 调用通用的绘图函数渲染 (反转Y轴: true)
+    renderMultiExamLineChart(containerId, '', examNames, series, true);
 }
