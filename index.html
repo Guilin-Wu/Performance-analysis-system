@@ -107,7 +107,35 @@
 
             <div id="module-ai-advisor" class="module-panel">
                 <h2>模块十四：AI 智能分析</h2>
+                <p>AI 智能分析模块基于 DeepSeek 模型，提供以下功能：</p>
+                <ul>
+                    <li>分析学生历史成绩趋势</li>
+                    <li>识别学生偏科情况</li>
+                    <li>提供个性化学习建议</li>
+                </ul>
                 <p style="color: var(--text-muted);">基于 DeepSeek模型，分析学生历史成绩趋势与偏科情况，提供个性化建议。</p>
+
+                <button id="ai-history-toggle-btn" title="查看历史记录">
+                    🕒 历史
+                </button>
+
+                <div id="ai-history-drawer">
+                    <div class="history-header">
+                        <h3>🕒 对话历史</h3>
+                        <button id="ai-history-close-btn">&times;</button>
+                    </div>
+
+                    <div class="history-actions">
+                        <button id="ai-history-clear-btn" class="sidebar-button"
+                            style="background-color: var(--color-red); width: 100%; font-size: 0.85em;">
+                            🗑️ 清空所有记录
+                        </button>
+                    </div>
+
+                    <div id="ai-history-list" class="history-list-container">
+                        <p style="color: #999; text-align: center; margin-top: 20px;">暂无历史记录</p>
+                    </div>
+                </div>
 
                 <div class="main-card-wrapper"
                     style="margin-bottom: 20px; border-left: 5px solid var(--primary-color);">
@@ -226,7 +254,7 @@
                     <div id="ai-followup-input-area"
                         style="display: none; margin-top: 15px; gap: 10px; align-items: flex-start;">
                         <textarea id="ai-user-input" class="sidebar-select" rows="1"
-                            placeholder="继续追问 AI (例如：给我详细讲讲数学错题...)"
+                            placeholder="继续追问 AI (例如：根据掌握不扎实的知识点出一套题目...)"
                             style="flex-grow: 1; resize: none; height: 40px; padding: 10px; line-height: 20px;"></textarea>
                         <button id="ai-send-btn" class="sidebar-button"
                             style="height: 42px; background-color: var(--primary-color); white-space: nowrap; flex-shrink: 0; width: 80px;">发送</button>

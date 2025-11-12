@@ -82,6 +82,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeSubjectConfigs(); // 初始化科目配置
     loadDataFromStorage();
     initAIModule();
+    // 初始化历史记录 UI
+    initAIHistoryUI();
 
     // ---------------------------------
     // 3. 事件监听器
@@ -6030,7 +6032,7 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
 
             rankData.classRank.push(student.rank || null);
             rankData.gradeRank.push(student.gradeRank || null);
-            
+
             dynamicSubjects.forEach(subject => {
                 const rawScore = student.scores[subject];
                 // [!! 修复 1] 只有当 rawScore 严格为 null/undefined 时才存为 null (保留 0 分)
@@ -6229,6 +6231,7 @@ function renderItemAnalysis(container) {
     // 1. 渲染基础HTML
     container.innerHTML = `
         <h2>模块十三：学科小题分析</h2>
+        
         <p style="margin-top: -20px; margin-bottom: 20px; color: var(--text-muted);">
             请导入“小题分明细”Excel文件。系统将自动解析所有工作表(Sheet)，每个工作表代表一个科目。
         </p>
@@ -8892,13 +8895,13 @@ function initAIModule() {
     const saveKeyBtn = document.getElementById('ai-save-key-btn');
     const analyzeBtn = document.getElementById('ai-analyze-btn');
     const searchInput = document.getElementById('ai-student-search');
-    const modeSelect = document.getElementById('ai-mode-select'); 
+    const modeSelect = document.getElementById('ai-mode-select');
     const itemSubjectWrapper = document.getElementById('ai-item-subject-wrapper');
     const itemSubjectSelect = document.getElementById('ai-item-subject');
     const itemClassWrapper = document.getElementById('ai-item-class-wrapper');
     const itemClassSelect = document.getElementById('ai-item-class');
     const studentSearchContainer = document.querySelector('.search-combobox');
-    const qCountWrapper = document.getElementById('ai-q-count-wrapper'); 
+    const qCountWrapper = document.getElementById('ai-q-count-wrapper');
 
     // 加载 Key
     const savedKey = localStorage.getItem('G_DeepSeekKey');
@@ -8936,11 +8939,11 @@ function initAIModule() {
         const students = window.G_ItemAnalysisData[subject].students;
         const classes = [...new Set(students.map(s => s.class))].sort();
         const currentClass = itemClassSelect.value;
-        
+
         let html = `<option value="ALL">-- 全体年段 --</option>`;
         html += classes.map(c => `<option value="${c}">${c}</option>`).join('');
         itemClassSelect.innerHTML = html;
-        
+
         // 尝试恢复之前的选择
         if (currentClass && (classes.includes(currentClass) || currentClass === 'ALL')) {
             itemClassSelect.value = currentClass;
@@ -8972,7 +8975,7 @@ function initAIModule() {
 
         if (val === 'item_diagnosis' || val === 'teaching_guide') {
             itemSubjectWrapper.style.display = 'inline-flex';
-            
+
             // [!!] 强制加载数据
             if (!window.G_ItemAnalysisData) {
                 const stored = localStorage.getItem('G_ItemAnalysisData');
@@ -8981,7 +8984,7 @@ function initAIModule() {
                         window.G_ItemAnalysisData = JSON.parse(stored);
                         const cfg = localStorage.getItem('G_ItemAnalysisConfig');
                         if (cfg) window.G_ItemAnalysisConfig = JSON.parse(cfg);
-                    } catch(e) { console.error(e); }
+                    } catch (e) { console.error(e); }
                 }
             }
 
@@ -8992,9 +8995,9 @@ function initAIModule() {
                 if (subjects.length > 0) {
                     itemSubjectSelect.innerHTML = subjects.map(s => `<option value="${s}">${s}</option>`).join('');
                     if (currentVal && subjects.includes(currentVal)) itemSubjectSelect.value = currentVal;
-                    
+
                     // [!! 核心修复 !!] 手动调用一次更新班级，确保班级列表不为空
-                    updateClassList(); 
+                    updateClassList();
                 } else {
                     itemSubjectSelect.innerHTML = `<option value="">无数据</option>`;
                 }
@@ -9003,10 +9006,10 @@ function initAIModule() {
             }
 
             if (val === 'teaching_guide') {
-                studentSearchContainer.style.display = 'none'; 
+                studentSearchContainer.style.display = 'none';
                 itemClassWrapper.style.display = 'inline-flex';
             } else {
-                studentSearchContainer.style.display = 'inline-block'; 
+                studentSearchContainer.style.display = 'inline-block';
                 itemClassWrapper.style.display = 'none';
             }
         } else {
@@ -9045,15 +9048,15 @@ function initAIModule() {
 
     // 点击分析按钮
     analyzeBtn.addEventListener('click', () => {
-        const studentId = searchInput.dataset.selectedId || ""; 
+        const studentId = searchInput.dataset.selectedId || "";
         const studentName = searchInput.dataset.selectedName || "全体同学";
-        
+
         const mode = document.getElementById('ai-mode-select').value;
         const model = document.getElementById('ai-model-select').value;
         const qCount = document.getElementById('ai-q-count').value;
         const grade = document.getElementById('ai-grade-select').value;
         const targetSubject = document.getElementById('ai-item-subject').value;
-        
+
         // 获取班级
         const classSelect = document.getElementById('ai-item-class');
         const targetClass = classSelect ? classSelect.value : 'ALL';
@@ -9063,23 +9066,23 @@ function initAIModule() {
 
         if (mode === 'teaching_guide' || mode === 'item_diagnosis') {
             if (!targetSubject) { alert("请选择一个科目！"); return; }
-            
+
             // 再次补救数据加载
             if (!window.G_ItemAnalysisData) {
                 const stored = localStorage.getItem('G_ItemAnalysisData');
                 if (stored) {
                     window.G_ItemAnalysisData = JSON.parse(stored);
                     const cfg = localStorage.getItem('G_ItemAnalysisConfig');
-                    if(cfg) window.G_ItemAnalysisConfig = JSON.parse(cfg);
+                    if (cfg) window.G_ItemAnalysisConfig = JSON.parse(cfg);
                 } else {
                     alert("无法读取数据，请先去模块13导入！"); return;
                 }
             }
-            
+
             if (!window.G_ItemAnalysisData[targetSubject]) {
                 alert(`找不到科目【${targetSubject}】的数据。`); return;
             }
-            
+
             if (mode === 'item_diagnosis' && !studentId) {
                 alert('请先选择一名学生'); return;
             }
@@ -9098,8 +9101,8 @@ function initAIModule() {
 
 // 2. 收集学生数据并生成 Prompt (修复版：增加空值检查)
 function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高三", targetSubject = "", targetClass = "ALL") {
-    
-// ==========================================
+
+    // ==========================================
     // 分支 C: 教师教学指导 (智能分流版：支持班级对比 & 年段诊断)
     // ==========================================
     if (mode === 'teaching_guide') {
@@ -9112,12 +9115,12 @@ function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高
         let targetStudents = itemData.students;
         let scopeName = "全年段";
         const isWholeGrade = (targetClass === 'ALL'); // [!!] 标记是否为全体模式
-        
+
         if (!isWholeGrade) {
             targetStudents = itemData.students.filter(s => s.class === targetClass);
             scopeName = targetClass;
         }
-        
+
         if (targetStudents.length === 0) return `错误：在【${targetSubject}】中未找到【${scopeName}】的学生数据。`;
 
         // [!!] 核心修改 1：根据模式切换身份设定
@@ -9127,12 +9130,12 @@ function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高
         } else {
             prompt = `你是一位经验丰富的**${targetSubject}**任课教师。现在请对**${scopeName}**（共${targetStudents.length}人）的考试数据进行深度分析。\n\n`;
         }
-        
+
         // [!!] 核心修改 2：根据模式切换表格列和数据逻辑
-        let tableHeader = isWholeGrade 
+        let tableHeader = isWholeGrade
             ? `| 题号 | 知识点 | **全年段得分率** | 难度评价 |\n|---|---|---|---|\n`
             : `| 题号 | 知识点 | 本班得分率 | 年级得分率 | 差值 |\n|---|---|---|---|---|\n`;
-            
+
         let tableData = tableHeader;
 
         const calcStats = (qList, scoreKey, statsObj) => {
@@ -9153,7 +9156,7 @@ function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高
                     const classAvg = validCount > 0 ? classTotal / validCount : 0;
                     const classRatio = classAvg / fullScore;
                     const gradeRatio = gradeStat.avg / fullScore;
-                    
+
                     if (isWholeGrade) {
                         // [模式 A: 全年段] 只看绝对得分率
                         // 定义简单规则：得分率 < 60% 标记为困难/薄弱
@@ -9162,16 +9165,16 @@ function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高
                         else if (gradeRatio < 0.6) status = "**较低 (薄弱点)**";
                         else if (gradeRatio > 0.85) status = "优秀";
                         else status = "正常";
-                        
+
                         // 只有当题目比较难(得分率<75%) 或者 极易时才放入报告，避免表格过长
                         // (或者你可以列出所有，AI会自动挑重点) -> 这里我们全列出，交给AI筛选
-                        text += `| ${qName} | ${content} | ${(gradeRatio*100).toFixed(1)}% | ${status} |\n`;
-                        
+                        text += `| ${qName} | ${content} | ${(gradeRatio * 100).toFixed(1)}% | ${status} |\n`;
+
                     } else {
                         // [模式 B: 班级对比] 看差值
                         const diff = classRatio - gradeRatio;
-                        const diffStr = diff > 0 ? `+${(diff*100).toFixed(1)}%` : `**${(diff*100).toFixed(1)}%**`;
-                        text += `| ${qName} | ${content} | ${(classRatio*100).toFixed(1)}% | ${(gradeRatio*100).toFixed(1)}% | ${diffStr} |\n`;
+                        const diffStr = diff > 0 ? `+${(diff * 100).toFixed(1)}%` : `**${(diff * 100).toFixed(1)}%**`;
+                        text += `| ${qName} | ${content} | ${(classRatio * 100).toFixed(1)}% | ${(gradeRatio * 100).toFixed(1)}% | ${diffStr} |\n`;
                     }
                 }
             });
@@ -9192,7 +9195,7 @@ function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高
         prompt += `为了保证报告的美观性，请务必按照以下格式输出：\n\n`;
         prompt += `1. **标题格式**：所有章节标题必须使用 **### (三级标题)**，例如：### 1. 诊断概览。\n`;
         prompt += `2. **重点高亮**：关键数据（如${isWholeGrade ? '低得分率' : '落后幅度'}）请使用 **加粗**。\n`;
-        
+
         prompt += `3. **内容结构**：\n`;
         if (isWholeGrade) {
             // ---> 全年段模式的指令 <---
@@ -9344,19 +9347,19 @@ function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高
 }
 
 // 3. 调用 DeepSeek API (最终安全版 V5：全流程异常捕获)
-async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount, grade, targetSubject, targetClass)  {
+async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount, grade, targetSubject, targetClass) {
     const resultContainer = document.getElementById('ai-result-container');
     const loadingDiv = document.getElementById('ai-loading');
     const contentDiv = document.getElementById('ai-content');
     const stopBtn = document.getElementById('ai-stop-btn');
-    
+
     // UI 初始化
     if (typeof marked === 'undefined') { alert("错误：marked.js 未加载！"); return; }
     resultContainer.style.display = 'block';
-    contentDiv.innerHTML = ''; 
+    contentDiv.innerHTML = '';
     contentDiv.classList.add('typing-cursor');
     stopBtn.style.display = 'inline-block';
-    
+
     const chatHistoryDiv = document.getElementById('ai-chat-history');
     const inputArea = document.getElementById('ai-followup-input-area');
     if (chatHistoryDiv) chatHistoryDiv.innerHTML = '';
@@ -9379,7 +9382,7 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
 
     if (currentAIController) currentAIController.abort();
     currentAIController = new AbortController();
-    
+
     stopBtn.onclick = () => {
         if (currentAIController) {
             currentAIController.abort();
@@ -9391,6 +9394,7 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
         }
     };
 
+    let fullContent = "";
     // [!! 核心修复 !!] 使用 try-catch 包裹整个流程，包括 Prompt 生成
     try {
         // 1. 生成 Prompt (这一步最容易出错，现在被保护起来了)
@@ -9404,8 +9408,8 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
         // 3. 初始化对话历史
         const temp = (model === 'deepseek-reasoner') ? 0.6 : 0.7;
         G_AIChatHistory = [
-            {"role": "system", "content": "你是一名专业的中学数据分析师。请使用 Markdown 格式输出。数学公式**必须**使用 LaTeX 格式：行内公式用 $...$ 或 \\(...\\) 包裹，独立公式用 $$...$$ 包裹。化学式请使用 \\ce{...} 格式。"},
-            {"role": "user", "content": prompt}
+            { "role": "system", "content": "你是一名专业的中学数据分析师。请使用 Markdown 格式输出。数学公式**必须**使用 LaTeX 格式：行内公式用 $...$ 或 \\(...\\) 包裹，独立公式用 $$...$$ 包裹。化学式请使用 \\ce{...} 格式。" },
+            { "role": "user", "content": prompt }
         ];
 
         // 4. 发起请求
@@ -9416,10 +9420,10 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: model, 
+                model: model,
                 messages: G_AIChatHistory,
                 temperature: temp,
-                stream: true 
+                stream: true
             }),
             signal: currentAIController.signal
         });
@@ -9437,9 +9441,9 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
-        
+
         let fullReasoning = "";
-        let fullContent = "";
+
         const reasoningTemplate = (text) => `<div style="border-left: 3px solid #ccc; background: #f9f9f9; padding: 10px 15px; margin-bottom: 15px; color: #666; font-size: 0.9em; font-style: italic;"><div style="font-weight:bold; margin-bottom:5px;">🤔 深度思考过程:</div><div style="white-space: pre-wrap;">${text}</div></div>`;
 
         while (true) {
@@ -9447,7 +9451,7 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
             if (done) break;
             const chunk = decoder.decode(value, { stream: true });
             const lines = chunk.split('\n');
-            
+
             for (const line of lines) {
                 const trimmed = line.trim();
                 if (!trimmed || trimmed === 'data: [DONE]') continue;
@@ -9474,25 +9478,74 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
                                 contentDiv.innerHTML = finalHtml;
                                 if (window.renderMathInElement) {
                                     renderMathInElement(contentDiv, {
-                                        delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}],
+                                        delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }],
                                         throwOnError: false
                                         // macros 行已删除，让 mhchem 插件自动工作
                                     });
                                 }
                             });
                         }
-                    } catch (e) {}
+                    } catch (e) { }
                 }
             }
         }
-        G_AIChatHistory.push({"role": "assistant", "content": fullContent});
+        G_AIChatHistory.push({ "role": "assistant", "content": fullContent });
+        // [!! NEW !!] 自动保存到历史记录
+        // 1. 构造标题
+        let historyTitle = "";
+        let historySubTitle = "";
+
+        // 根据模式获取更友好的标题
+        const modeText = document.getElementById('ai-mode-select').selectedOptions[0].text;
+
+        if (mode === 'teaching_guide') {
+            const className = document.getElementById('ai-item-class').value;
+            const classText = className === 'ALL' ? '全年段' : className;
+            historyTitle = `教学指导 - ${targetSubject}`;
+            historySubTitle = `${classText} | ${modeText}`;
+        } else {
+            historyTitle = `${studentName} - ${targetSubject || '综合'}`;
+            historySubTitle = `${grade} | ${modeText}`;
+        }
+
+        // 2. 保存当前生成的 HTML 内容
+        saveToAIHistory(historyTitle, historySubTitle, contentDiv.innerHTML);
         if (inputArea) inputArea.style.display = 'flex';
 
     } catch (err) {
         clearInterval(progressInterval);
         loadingDiv.style.display = 'none';
-        if (err.name !== 'AbortError') {
-            // [!!] 任何错误（包括 Prompt 生成错误）都会显示在这里
+
+        // [!! 核心修改 2] 专门处理“手动停止”的情况
+        if (err.name === 'AbortError') {
+            // 1. 在界面上标记已停止
+            contentDiv.classList.remove('typing-cursor');
+
+            // 2. 只有当已经生成了内容时，才保存
+            if (fullContent && fullContent.trim().length > 5) {
+                // (复用标题生成逻辑)
+                const modeEl = document.getElementById('ai-mode-select');
+                const modeText = modeEl.selectedOptions[0].text;
+                let historyTitle = "";
+                let historySubTitle = "";
+
+                if (mode === 'teaching_guide') {
+                    const className = document.getElementById('ai-item-class').value;
+                    const classText = className === 'ALL' ? '全年段' : className;
+                    historyTitle = `教学指导 - ${targetSubject}`;
+                    historySubTitle = `${classText} | ${modeText} (未完成)`; // 标记为未完成
+                } else {
+                    historyTitle = `${studentName} - ${targetSubject || '综合'}`;
+                    historySubTitle = `${grade} | ${modeText} (未完成)`;
+                }
+
+                // 保存当前已生成的内容 (并在末尾加上提示)
+                const savedContent = contentDiv.innerHTML + `<br><br><em style="color: #dc3545; font-size:0.9em;">(用户手动停止了生成)</em>`;
+                saveToAIHistory(historyTitle, historySubTitle, savedContent);
+            }
+        }
+        // 处理真正的错误 (排除 AbortError)
+        else {
             contentDiv.innerHTML = `
                 <div style="padding: 20px; background-color: #fff5f5; border-left: 5px solid #dc3545; border-radius: 4px; color: #721c24;">
                     <h3 style="margin-top: 0; color: #dc3545;">⚠️ 出错了</h3>
@@ -9614,11 +9667,11 @@ function renderMarkdownWithMath(element, markdown) {
     // [!! 最终修复 !!] 移除所有的 replace 预处理
     // 因为 Prompt 已经让 AI 生成了标准的 LaTeX 格式 ($...$)
     // 我们直接渲染，不再画蛇添足，这样就不会导致换行或乱码了
-    
+
     // 1. 保护公式 (防止 marked.js 把公式里的符号误认为是 markdown 语法)
     const mathSegments = [];
     const protectedMarkdown = markdown.replace(
-        /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\\ce\{[^\}]+\}|\$[^\$]+\$)/g, 
+        /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\\ce\{[^\}]+\}|\$[^\$]+\$)/g,
         (match) => {
             const placeholder = `MATHBLOCK${mathSegments.length}END`;
             mathSegments.push(match);
@@ -9756,4 +9809,154 @@ function printAIReport() {
         win.focus();
         win.print();
     }, 1000); // 1秒延迟确保渲染
+}
+
+// =====================================================================
+// [!! NEW !!] 模块十四：AI 历史记录管理器
+// =====================================================================
+
+const AI_HISTORY_KEY = 'G_AI_History_Archive';
+
+/**
+ * 初始化历史记录 UI 和事件
+ * (需要在 initAIModule 中调用)
+ */
+function initAIHistoryUI() {
+    const drawer = document.getElementById('ai-history-drawer');
+    const toggleBtn = document.getElementById('ai-history-toggle-btn');
+    const closeBtn = document.getElementById('ai-history-close-btn');
+    const clearBtn = document.getElementById('ai-history-clear-btn');
+
+    // 开关抽屉
+    toggleBtn.addEventListener('click', () => {
+        drawer.classList.add('open');
+        renderAIHistoryList(); // 每次打开时刷新列表
+    });
+    closeBtn.addEventListener('click', () => {
+        drawer.classList.remove('open');
+    });
+
+    // 清空所有
+    clearBtn.addEventListener('click', () => {
+        if (confirm('确定要删除所有历史对话记录吗？此操作不可撤销。')) {
+            localStorage.removeItem(AI_HISTORY_KEY);
+            renderAIHistoryList();
+        }
+    });
+
+    // 点击遮罩层关闭 (如果想做的更细致，可以加个点击 content 关闭 drawer 的逻辑，这里暂略)
+}
+
+/**
+ * 保存一次 AI 对话到历史记录
+ * @param {string} title - 标题 (学生名 + 科目)
+ * @param {string} subTitle - 副标题 (模式)
+ * @param {string} htmlContent - 完整的 HTML 内容
+ */
+function saveToAIHistory(title, subTitle, htmlContent) {
+    if (!htmlContent || htmlContent.trim().length < 50) return; // 内容太少不保存
+
+    const now = new Date();
+    const record = {
+        id: Date.now(), // 唯一ID
+        timestamp: now.toLocaleString(),
+        title: title,
+        subTitle: subTitle,
+        content: htmlContent
+    };
+
+    // 读取现有记录
+    let history = JSON.parse(localStorage.getItem(AI_HISTORY_KEY) || "[]");
+
+    // 添加新记录到开头
+    history.unshift(record);
+
+    // 限制存储数量 (例如最多保留 50 条，防止 LocalStorage 爆满)
+    if (history.length > 50) {
+        history = history.slice(0, 50);
+    }
+
+    localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(history));
+
+    // 如果侧边栏是打开的，刷新它
+    const drawer = document.getElementById('ai-history-drawer');
+    if (drawer.classList.contains('open')) {
+        renderAIHistoryList();
+    }
+}
+
+/**
+ * 渲染历史记录列表
+ */
+function renderAIHistoryList() {
+    const listContainer = document.getElementById('ai-history-list');
+    const history = JSON.parse(localStorage.getItem(AI_HISTORY_KEY) || "[]");
+
+    if (history.length === 0) {
+        listContainer.innerHTML = `<p style="color: #999; text-align: center; margin-top: 40px;">暂无历史记录</p>`;
+        return;
+    }
+
+    listContainer.innerHTML = history.map(item => `
+        <div class="history-item" onclick="loadAIHistoryItem(${item.id})">
+            <button class="history-delete-btn" onclick="deleteAIHistoryItem(event, ${item.id})">&times;</button>
+            <h4>${item.title}</h4>
+            <p>${item.subTitle}</p>
+            <span class="history-date">${item.timestamp}</span>
+        </div>
+    `).join('');
+}
+
+/**
+ * 加载单条历史记录到主视图
+ */
+function loadAIHistoryItem(id) {
+    const history = JSON.parse(localStorage.getItem(AI_HISTORY_KEY) || "[]");
+    const item = history.find(r => r.id === id);
+
+    if (item) {
+        const contentDiv = document.getElementById('ai-content');
+        const resultContainer = document.getElementById('ai-result-container');
+
+        // 显示结果容器
+        resultContainer.style.display = 'block';
+
+        // 注入内容
+        contentDiv.innerHTML = item.content;
+
+        // 重新渲染公式 (因为 innerHTML 注入不会自动触发 KaTeX)
+        if (window.renderMathInElement) {
+            renderMathInElement(contentDiv, {
+                delimiters: [
+                    { left: "$$", right: "$$", display: true },
+                    { left: "\\[", right: "\\]", display: true },
+                    { left: "$", right: "$", display: false },
+                    { left: "\\(", right: "\\)", display: false }
+                ],
+                throwOnError: false
+            });
+        }
+
+        // 移动端/小屏下，点击后自动关闭抽屉
+        if (window.innerWidth < 1000) {
+            document.getElementById('ai-history-drawer').classList.remove('open');
+        }
+
+        // 提示用户
+        alert(`已加载历史记录：${item.title}`);
+    }
+}
+
+/**
+ * 删除单条记录
+ */
+function deleteAIHistoryItem(event, id) {
+    event.stopPropagation(); // 防止触发 onclick 加载
+    if (!confirm('确定删除这条记录吗？')) return;
+
+    let history = JSON.parse(localStorage.getItem(AI_HISTORY_KEY) || "[]");
+    history = history.filter(r => r.id !== id);
+    localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(history));
+
+    renderAIHistoryList();
 }
