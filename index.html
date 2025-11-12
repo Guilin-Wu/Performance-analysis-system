@@ -156,7 +156,8 @@
                             <option value="trend">📈 综合趋势点评 & 学习建议</option>
                             <option value="weakness">📉 弱科诊断 & 提分策略</option>
                             <option value="question">📝 针对弱项生成练习题</option>
-                            <option value="item_diagnosis">🔬 小题深度诊断 (基于模块13数据)</option>
+                            <option value="item_diagnosis">🔬 小题深度诊断 (学生视角)</option>
+                            <option value="teaching_guide">🍎 教师教学指导 (班级视角)</option>
                         </select>
 
                         <span id="ai-item-subject-wrapper"
@@ -166,6 +167,15 @@
                             <select id="ai-item-subject" class="sidebar-select"
                                 style="width: auto; min-width: 80px; border-color: #17a2b8; background-color: #f0fcfd;">
                                 <option value="">无数据</option>
+                            </select>
+                        </span>
+
+                        <span id="ai-item-class-wrapper" style="display: none; margin-left: 10px; align-items: center;">
+                            <label for="ai-item-class"
+                                style="margin-right: 5px; font-size: 0.9em; color: #555;">班级:</label>
+                            <select id="ai-item-class" class="sidebar-select"
+                                style="width: auto; min-width: 80px; border-color: #fd7e14; background-color: #fffbf5;">
+                                <option value="ALL">-- 全体年段 --</option>
                             </select>
                         </span>
 
@@ -197,9 +207,10 @@
                                 style="background-color: #dc3545; padding: 4px 12px; font-size: 0.85em; display: none;">
                                 ⏹ 停止生成
                             </button>
+                            <button id="ai-print-btn" class="sidebar-button" ...>🖨️ 打印报告</button>
+                            <button id="ai-copy-btn" class="sidebar-button"
+                                style="font-size: 0.8em; padding: 4px 8px; background-color: var(--color-gray);">复制内容</button>
                         </div>
-                        <button id="ai-copy-btn" class="sidebar-button"
-                            style="font-size: 0.8em; padding: 4px 8px; background-color: var(--color-gray);">复制内容</button>
                     </div>
 
                     <div id="ai-loading" style="display: none; text-align: center; padding: 40px;">

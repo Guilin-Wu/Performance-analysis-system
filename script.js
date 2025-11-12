@@ -8873,34 +8873,34 @@ function renderSubjectRankChart(containerId, examNames, visibleExamData, student
 // [!! NEW !!] 模块十四：AI 智能分析 (DeepSeek 集成)
 // =====================================================================
 
-// 1. 初始化 AI 模块
+// 1. 初始化 AI 模块 (Debug 增强版)
+// 1. 初始化 AI 模块 (修复版：解决班级列表初始化问题)
 function initAIModule() {
     const apiKeyInput = document.getElementById('ai-api-key');
     const saveKeyBtn = document.getElementById('ai-save-key-btn');
     const analyzeBtn = document.getElementById('ai-analyze-btn');
     const searchInput = document.getElementById('ai-student-search');
-
-    const modeSelect = document.getElementById('ai-mode-select'); // 获取模式下拉框
-
+    const modeSelect = document.getElementById('ai-mode-select'); 
     const itemSubjectWrapper = document.getElementById('ai-item-subject-wrapper');
     const itemSubjectSelect = document.getElementById('ai-item-subject');
+    const itemClassWrapper = document.getElementById('ai-item-class-wrapper');
+    const itemClassSelect = document.getElementById('ai-item-class');
+    const studentSearchContainer = document.querySelector('.search-combobox');
+    const qCountWrapper = document.getElementById('ai-q-count-wrapper'); 
 
-    const qCountWrapper = document.getElementById('ai-q-count-wrapper'); // 获取题量容器
-
-    // 加载保存的 Key
+    // 加载 Key
     const savedKey = localStorage.getItem('G_DeepSeekKey');
     if (savedKey) {
         apiKeyInput.value = savedKey;
         document.getElementById('ai-key-status').style.display = 'inline';
     }
 
-    // [!! 新增 !!] 绑定追问发送按钮
+    // 绑定按钮
     const sendFollowUpBtn = document.getElementById('ai-send-btn');
-    if (sendFollowUpBtn) {
-        sendFollowUpBtn.addEventListener('click', sendAIFollowUp);
-    }
+    if (sendFollowUpBtn) sendFollowUpBtn.addEventListener('click', sendAIFollowUp);
+    const printReportBtn = document.getElementById('ai-print-btn');
+    if (printReportBtn) printReportBtn.addEventListener('click', printAIReport);
 
-    // 保存 Key
     saveKeyBtn.addEventListener('click', () => {
         const key = apiKeyInput.value.trim();
         if (key.startsWith('sk-')) {
@@ -8908,74 +8908,113 @@ function initAIModule() {
             document.getElementById('ai-key-status').style.display = 'inline';
             alert('API Key 已保存！');
         } else {
-            alert('请输入有效的 DeepSeek API Key (以 sk- 开头)');
+            alert('请输入有效的 DeepSeek API Key');
         }
     });
 
-    // [!! 新增 !!] 监听模式变化，如果是“生成练习题”，则显示题量输入框
-    // [!! 修改 !!] 监听模式变化
-    modeSelect.addEventListener('change', () => {
-        const val = modeSelect.value;
-
-        // 1. 控制“题量”框
-        if (document.getElementById('ai-q-count-wrapper')) {
-            document.getElementById('ai-q-count-wrapper').style.display = (val === 'question') ? 'inline-flex' : 'none';
+    // [!! 新增 !!] 独立的更新班级列表函数
+    const updateClassList = () => {
+        const subject = itemSubjectSelect.value;
+        // 确保有数据
+        if (!subject || !window.G_ItemAnalysisData || !window.G_ItemAnalysisData[subject]) {
+            itemClassSelect.innerHTML = `<option value="ALL">-- 全体年段 --</option>`;
+            return;
         }
 
-        // 2. [!! 新增 !!] 控制“科目”框 (针对小题分析)
-        // 2. [!! 新增 !!] 控制“科目”框 (针对小题分析)
-        if (val === 'item_diagnosis') {
-            itemSubjectWrapper.style.display = 'inline-flex';
+        const students = window.G_ItemAnalysisData[subject].students;
+        const classes = [...new Set(students.map(s => s.class))].sort();
+        const currentClass = itemClassSelect.value;
+        
+        let html = `<option value="ALL">-- 全体年段 --</option>`;
+        html += classes.map(c => `<option value="${c}">${c}</option>`).join('');
+        itemClassSelect.innerHTML = html;
+        
+        // 尝试恢复之前的选择
+        if (currentClass && (classes.includes(currentClass) || currentClass === 'ALL')) {
+            itemClassSelect.value = currentClass;
+        }
+    };
 
-            // [!! 核心修复 !!] 自动补救：如果内存没数据，尝试从缓存加载
+    // 监听科目变化
+    itemSubjectSelect.addEventListener('change', updateClassList);
+
+    // 监听模式变化
+    // 监听模式变化
+    modeSelect.addEventListener('change', () => {
+        const val = modeSelect.value;
+        if (qCountWrapper) qCountWrapper.style.display = (val === 'question') ? 'inline-flex' : 'none';
+
+        // [!! 修复开始 !!] 控制按钮的可用状态
+        if (val === 'teaching_guide') {
+            // 教师模式不需要选学生，直接激活按钮
+            analyzeBtn.disabled = false;
+        } else {
+            // 其他模式：如果没有选过学生，则禁用按钮；如果选过（dataset有值），则保持激活
+            if (searchInput.dataset.selectedId) {
+                analyzeBtn.disabled = false;
+            } else {
+                analyzeBtn.disabled = true;
+            }
+        }
+        // [!! 修复结束 !!]
+
+        if (val === 'item_diagnosis' || val === 'teaching_guide') {
+            itemSubjectWrapper.style.display = 'inline-flex';
+            
+            // [!!] 强制加载数据
             if (!window.G_ItemAnalysisData) {
-                const storedItemData = localStorage.getItem('G_ItemAnalysisData');
-                if (storedItemData) {
+                const stored = localStorage.getItem('G_ItemAnalysisData');
+                if (stored) {
                     try {
-                        window.G_ItemAnalysisData = JSON.parse(storedItemData);
-                        // 顺便把配置也加载了，以防万一
-                        const storedItemConfig = localStorage.getItem('G_ItemAnalysisConfig');
-                        if (storedItemConfig) window.G_ItemAnalysisConfig = JSON.parse(storedItemConfig);
-                    } catch (e) {
-                        console.error("AI模块自动加载小题数据失败:", e);
-                    }
+                        window.G_ItemAnalysisData = JSON.parse(stored);
+                        const cfg = localStorage.getItem('G_ItemAnalysisConfig');
+                        if (cfg) window.G_ItemAnalysisConfig = JSON.parse(cfg);
+                    } catch(e) { console.error(e); }
                 }
             }
 
-            // 自动填充科目列表 (现在应该能读到了)
+            // [!!] 填充科目并立即触发班级更新
             if (window.G_ItemAnalysisData) {
                 const subjects = Object.keys(window.G_ItemAnalysisData);
+                const currentVal = itemSubjectSelect.value;
                 if (subjects.length > 0) {
-                    // 保留当前选中的值（防止刷新闪烁）
-                    const currentVal = itemSubjectSelect.value;
                     itemSubjectSelect.innerHTML = subjects.map(s => `<option value="${s}">${s}</option>`).join('');
                     if (currentVal && subjects.includes(currentVal)) itemSubjectSelect.value = currentVal;
+                    
+                    // [!! 核心修复 !!] 手动调用一次更新班级，确保班级列表不为空
+                    updateClassList(); 
                 } else {
-                    itemSubjectSelect.innerHTML = `<option value="">缓存中无有效科目</option>`;
+                    itemSubjectSelect.innerHTML = `<option value="">无数据</option>`;
                 }
             } else {
-                itemSubjectSelect.innerHTML = `<option value="">请先在模块13导入数据</option>`;
+                itemSubjectSelect.innerHTML = `<option value="">请先导入数据</option>`;
+            }
+
+            if (val === 'teaching_guide') {
+                studentSearchContainer.style.display = 'none'; 
+                itemClassWrapper.style.display = 'inline-flex';
+            } else {
+                studentSearchContainer.style.display = 'inline-block'; 
+                itemClassWrapper.style.display = 'none';
             }
         } else {
             itemSubjectWrapper.style.display = 'none';
+            itemClassWrapper.style.display = 'none';
+            studentSearchContainer.style.display = 'inline-block';
         }
     });
 
-    // 搜索学生 (复用之前的逻辑，稍微简化)
+    // 搜索框逻辑 (保持不变)
     const resultsContainer = document.getElementById('ai-student-search-results');
-    // ... (此处可以复用 initializeStudentSearch 中的搜索逻辑，为了节省篇幅，建议直接调用或复制那段代码) ...
-    // 简单起见，我这里写一个简化的绑定：
     const multiData = loadMultiExamData();
     const allStudentsMap = new Map();
     multiData.forEach(exam => exam.students.forEach(s => allStudentsMap.set(s.id, s.name)));
-    // 还要加上当前 G_StudentsData 的
     G_StudentsData.forEach(s => allStudentsMap.set(s.id, s.name));
     const allStudentsList = Array.from(allStudentsMap, ([id, name]) => ({ id, name }));
 
     searchInput.addEventListener('input', (e) => {
         const term = e.target.value.toLowerCase();
         if (term.length < 1) { resultsContainer.style.display = 'none'; return; }
-
         const matches = allStudentsList.filter(s => s.name.toLowerCase().includes(term) || String(s.id).includes(term)).slice(0, 10);
         resultsContainer.innerHTML = matches.map(s => `<div class="result-item" data-id="${s.id}" data-name="${s.name}">${s.name} (${s.id})</div>`).join('');
         resultsContainer.style.display = 'block';
@@ -8988,59 +9027,57 @@ function initAIModule() {
             searchInput.dataset.selectedId = item.dataset.id;
             searchInput.dataset.selectedName = item.dataset.name;
             resultsContainer.style.display = 'none';
-            analyzeBtn.disabled = false; // 启用分析按钮
+            analyzeBtn.disabled = false;
         }
     });
 
     // 点击分析按钮
     analyzeBtn.addEventListener('click', () => {
-        const studentId = searchInput.dataset.selectedId;
-        const studentName = searchInput.dataset.selectedName;
+        const studentId = searchInput.dataset.selectedId || ""; 
+        const studentName = searchInput.dataset.selectedName || "全体同学";
+        
         const mode = document.getElementById('ai-mode-select').value;
         const model = document.getElementById('ai-model-select').value;
         const qCount = document.getElementById('ai-q-count').value;
-
         const grade = document.getElementById('ai-grade-select').value;
-
-        // 获取选中的科目
         const targetSubject = document.getElementById('ai-item-subject').value;
+        
+        // 获取班级
+        const classSelect = document.getElementById('ai-item-class');
+        const targetClass = classSelect ? classSelect.value : 'ALL';
 
         const apiKey = localStorage.getItem('G_DeepSeekKey');
-
-        // 1. 基础检查
         if (!apiKey) { alert('请先设置 DeepSeek API Key'); return; }
-        if (!studentId) { alert('请先选择一名学生'); return; }
 
-        // 2. [!! 核心修复 !!] 针对小题分析的严格检查
-        if (mode === 'item_diagnosis') {
-            // 检查 A: 用户是否选择了科目？
-            if (!targetSubject) {
-                alert("请在“科目”下拉框中选择一个具体的学科！\n(如果下拉框为空，请先去模块13导入数据)");
-                return; // ⛔️ 强制停止，不让空值传给 AI
-            }
-
-            // 检查 B: 数据是否存在？
-            if (!window.G_ItemAnalysisData || !window.G_ItemAnalysisData[targetSubject]) {
-                // 尝试最后的补救：从缓存重新加载
+        if (mode === 'teaching_guide' || mode === 'item_diagnosis') {
+            if (!targetSubject) { alert("请选择一个科目！"); return; }
+            
+            // 再次补救数据加载
+            if (!window.G_ItemAnalysisData) {
                 const stored = localStorage.getItem('G_ItemAnalysisData');
                 if (stored) {
                     window.G_ItemAnalysisData = JSON.parse(stored);
-                    if (!window.G_ItemAnalysisData[targetSubject]) {
-                        alert(`错误：找不到【${targetSubject}】的数据。请确认模块13中是否已导入该科。`);
-                        return;
-                    }
+                    const cfg = localStorage.getItem('G_ItemAnalysisConfig');
+                    if(cfg) window.G_ItemAnalysisConfig = JSON.parse(cfg);
                 } else {
-                    alert(`请先在“模块十三：学科小题分析”中导入数据！`);
-                    return;
+                    alert("无法读取数据，请先去模块13导入！"); return;
                 }
             }
+            
+            if (!window.G_ItemAnalysisData[targetSubject]) {
+                alert(`找不到科目【${targetSubject}】的数据。`); return;
+            }
+            
+            if (mode === 'item_diagnosis' && !studentId) {
+                alert('请先选择一名学生'); return;
+            }
+        } else {
+            if (!studentId) { alert('请先选择一名学生'); return; }
         }
 
-        // 3. 一切正常，开始分析
-        runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount, grade, targetSubject);
+        runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount, grade, targetSubject, targetClass);
     });
 
-    // 复制按钮
     document.getElementById('ai-copy-btn').addEventListener('click', () => {
         const content = document.getElementById('ai-content').innerText;
         navigator.clipboard.writeText(content).then(() => alert('内容已复制'));
@@ -9048,8 +9085,125 @@ function initAIModule() {
 }
 
 // 2. 收集学生数据并生成 Prompt (修复版：增加空值检查)
-function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高三", targetSubject = "") {
+function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高三", targetSubject = "", targetClass = "ALL") {
+    
+// ==========================================
+    // 分支 C: 教师教学指导 (智能分流版：支持班级对比 & 年段诊断)
+    // ==========================================
+    if (mode === 'teaching_guide') {
+        if (!window.G_ItemAnalysisData) return `系统错误：内存中没有小题分析数据。`;
+        const itemData = window.G_ItemAnalysisData[targetSubject];
+        if (!itemData) return `错误：找不到科目【${targetSubject}】的数据。`;
 
+        const itemConfig = window.G_ItemAnalysisConfig ? (window.G_ItemAnalysisConfig[targetSubject] || {}) : {};
+
+        let targetStudents = itemData.students;
+        let scopeName = "全年段";
+        const isWholeGrade = (targetClass === 'ALL'); // [!!] 标记是否为全体模式
+        
+        if (!isWholeGrade) {
+            targetStudents = itemData.students.filter(s => s.class === targetClass);
+            scopeName = targetClass;
+        }
+        
+        if (targetStudents.length === 0) return `错误：在【${targetSubject}】中未找到【${scopeName}】的学生数据。`;
+
+        // [!!] 核心修改 1：根据模式切换身份设定
+        let prompt = "";
+        if (isWholeGrade) {
+            prompt = `你是一位**${targetSubject}年级组长**。现在请对**${scopeName}**（共${targetStudents.length}人）的考试数据进行整体学情诊断。\n\n`;
+        } else {
+            prompt = `你是一位经验丰富的**${targetSubject}**任课教师。现在请对**${scopeName}**（共${targetStudents.length}人）的考试数据进行深度分析。\n\n`;
+        }
+        
+        // [!!] 核心修改 2：根据模式切换表格列和数据逻辑
+        let tableHeader = isWholeGrade 
+            ? `| 题号 | 知识点 | **全年段得分率** | 难度评价 |\n|---|---|---|---|\n`
+            : `| 题号 | 知识点 | 本班得分率 | 年级得分率 | 差值 |\n|---|---|---|---|---|\n`;
+            
+        let tableData = tableHeader;
+
+        const calcStats = (qList, scoreKey, statsObj) => {
+            let text = "";
+            qList.forEach(qName => {
+                const gradeStat = statsObj[qName];
+                if (!gradeStat) return;
+                const config = itemConfig[qName] || {};
+                const fullScore = config.fullScore || gradeStat.maxScore;
+                const content = config.content || "未标记";
+
+                if (fullScore > 0) {
+                    let classTotal = 0, validCount = 0;
+                    targetStudents.forEach(s => {
+                        const val = s[scoreKey][qName];
+                        if (typeof val === 'number') { classTotal += val; validCount++; }
+                    });
+                    const classAvg = validCount > 0 ? classTotal / validCount : 0;
+                    const classRatio = classAvg / fullScore;
+                    const gradeRatio = gradeStat.avg / fullScore;
+                    
+                    if (isWholeGrade) {
+                        // [模式 A: 全年段] 只看绝对得分率
+                        // 定义简单规则：得分率 < 60% 标记为困难/薄弱
+                        let status = "";
+                        if (gradeRatio < 0.4) status = "**极难 (攻坚点)**";
+                        else if (gradeRatio < 0.6) status = "**较低 (薄弱点)**";
+                        else if (gradeRatio > 0.85) status = "优秀";
+                        else status = "正常";
+                        
+                        // 只有当题目比较难(得分率<75%) 或者 极易时才放入报告，避免表格过长
+                        // (或者你可以列出所有，AI会自动挑重点) -> 这里我们全列出，交给AI筛选
+                        text += `| ${qName} | ${content} | ${(gradeRatio*100).toFixed(1)}% | ${status} |\n`;
+                        
+                    } else {
+                        // [模式 B: 班级对比] 看差值
+                        const diff = classRatio - gradeRatio;
+                        const diffStr = diff > 0 ? `+${(diff*100).toFixed(1)}%` : `**${(diff*100).toFixed(1)}%**`;
+                        text += `| ${qName} | ${content} | ${(classRatio*100).toFixed(1)}% | ${(gradeRatio*100).toFixed(1)}% | ${diffStr} |\n`;
+                    }
+                }
+            });
+            return text;
+        };
+
+        tableData += calcStats(itemData.minorQuestions, 'minorScores', itemData.minorStats);
+        tableData += calcStats(itemData.majorQuestions, 'majorScores', itemData.majorStats);
+
+        if (isWholeGrade) {
+            prompt += `以下是全年段各题的得分率数据：\n\n${tableData}\n\n`;
+        } else {
+            prompt += `以下是详细的得分率对比数据（差值为负表示本班落后于年级）：\n\n${tableData}\n\n`;
+        }
+
+        // [!!] 核心修改 3：根据模式切换任务指令 (强制 CSS 适配)
+        prompt += `### 📝 输出格式要求 (请严格遵守)\n`;
+        prompt += `为了保证报告的美观性，请务必按照以下格式输出：\n\n`;
+        prompt += `1. **标题格式**：所有章节标题必须使用 **### (三级标题)**，例如：### 1. 诊断概览。\n`;
+        prompt += `2. **重点高亮**：关键数据（如${isWholeGrade ? '低得分率' : '落后幅度'}）请使用 **加粗**。\n`;
+        
+        prompt += `3. **内容结构**：\n`;
+        if (isWholeGrade) {
+            // ---> 全年段模式的指令 <---
+            prompt += `   - **### 1. 年级学情概览**：简述全年段整体表现，平均分及试卷整体难度系数。\n`;
+            prompt += `   - **### 2. 共性薄弱点诊断**：\n`;
+            prompt += `     - 找出**全年段得分率最低**的几道题目（即全校学生的共同痛点）。\n`;
+            prompt += `     - 结合知识点，深入分析为什么大部分学生都掌握不好（是题目太难、还是教学盲区？）。\n`;
+            prompt += `     - 请输出一个 Markdown 表格列出这些“攻坚”题目。\n`;
+            prompt += `   - **### 3. 教学调整建议**：针对这些共性问题，给备课组提出下阶段的教学侧重点建议。\n`;
+        } else {
+            // ---> 班级对比模式的指令 (保持原样) <---
+            prompt += `   - **### 1. 班级诊断概览**：用列表简述本班整体表现，指出与年级相比的优势和劣势。\n`;
+            prompt += `   - **### 2. 痛点深度剖析**：\n`;
+            prompt += `     - 找出**差值**为负且绝对值最大的题目（即本班掌握最差的题）。\n`;
+            prompt += `     - 结合知识点，分析学生丢分原因。\n`;
+            prompt += `     - 请输出一个 Markdown 表格列出这些“重灾区”题目。\n`;
+            prompt += `   - **### 3. 教学干预策略**：针对上述痛点，给出具体的课堂教学调整建议。\n`;
+        }
+
+        prompt += `4. **公式格式**：涉及数学/物理/化学公式，必须使用 LaTeX 格式（如 $F=ma$）。\n`;
+
+        return prompt;
+    }
     // --- 分支 A: 小题深度诊断 (模块13) ---
     if (mode === 'item_diagnosis') {
         // [!! 修复 !!] 增加防御性检查
@@ -9177,53 +9331,33 @@ function generateAIPrompt(studentId, studentName, mode, qCount = 3, grade = "高
     return prompt;
 }
 
-// 3. 调用 DeepSeek API (最终完美版 V4：全格式兼容 + 深度保护)
-async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount, grade, targetSubject) {
+// 3. 调用 DeepSeek API (最终安全版 V5：全流程异常捕获)
+async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount, grade, targetSubject, targetClass)  {
     const resultContainer = document.getElementById('ai-result-container');
     const loadingDiv = document.getElementById('ai-loading');
     const contentDiv = document.getElementById('ai-content');
     const stopBtn = document.getElementById('ai-stop-btn');
     
-    if (typeof marked === 'undefined') { alert("错误：marked.js 未加载！"); return; }
-
     // UI 初始化
+    if (typeof marked === 'undefined') { alert("错误：marked.js 未加载！"); return; }
     resultContainer.style.display = 'block';
     contentDiv.innerHTML = ''; 
     contentDiv.classList.add('typing-cursor');
     stopBtn.style.display = 'inline-block';
     
-    // 清理旧聊天
     const chatHistoryDiv = document.getElementById('ai-chat-history');
     const inputArea = document.getElementById('ai-followup-input-area');
     if (chatHistoryDiv) chatHistoryDiv.innerHTML = '';
     if (inputArea) inputArea.style.display = 'none';
 
-    // 生成 Prompt
-    const prompt = generateAIPrompt(studentId, studentName, mode, qCount, grade, targetSubject);
-
-    // 拦截错误
-    if (prompt.startsWith('错误：') || prompt.startsWith('系统错误：')) {
-        contentDiv.classList.remove('typing-cursor');
-        stopBtn.style.display = 'none';
-        loadingDiv.style.display = 'none';
-        contentDiv.innerHTML = `
-            <div style="padding: 20px; background-color: #fff5f5; border-left: 5px solid #dc3545; border-radius: 4px; color: #721c24;">
-                <h3 style="margin-top: 0; color: #dc3545;">⚠️ 无法进行分析</h3>
-                <p style="margin-bottom: 0; white-space: pre-wrap;">${prompt}</p>
-            </div>
-        `;
-        return; 
-    }
-
     // 动态 Loading
     loadingDiv.innerHTML = `
         <div style="font-size: 2.5em; margin-bottom: 10px; animation: bounce 1.5s infinite;">🧠</div>
-        <p style="color: #666; font-weight: 500;">AI 正在深度分析 (年级: ${grade})...</p>
+        <p style="color: #666; font-weight: 500;">AI 正在深度分析...</p>
         <div class="ai-progress-container"><div class="ai-progress-bar" id="ai-progress-bar"></div></div>
     `;
     loadingDiv.style.display = 'block';
 
-    // 进度条
     const progressBar = document.getElementById('ai-progress-bar');
     let progress = 5;
     progressBar.style.width = `${progress}%`;
@@ -9245,15 +9379,24 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
         }
     };
 
-    // 对话历史
-    const temp = (model === 'deepseek-reasoner') ? 0.6 : 0.7;
-    G_AIChatHistory = [
-        // [!!] 提示词微调：允许 AI 使用它习惯的任意公式格式，我们会自动处理
-        {"role": "system", "content": "你是一名专业的中学数据分析师。请使用 Markdown 格式输出。对于数学公式，你可以自由使用 $...$ 或 \\(...\\) 格式。"},
-        {"role": "user", "content": prompt}
-    ];
-
+    // [!! 核心修复 !!] 使用 try-catch 包裹整个流程，包括 Prompt 生成
     try {
+        // 1. 生成 Prompt (这一步最容易出错，现在被保护起来了)
+        const prompt = generateAIPrompt(studentId, studentName, mode, qCount, grade, targetSubject, targetClass);
+
+        // 2. 检查业务错误
+        if (prompt.startsWith('错误：') || prompt.startsWith('系统错误：')) {
+            throw new Error(prompt); // 抛出错误，交给 catch 处理
+        }
+
+        // 3. 初始化对话历史
+        const temp = (model === 'deepseek-reasoner') ? 0.6 : 0.7;
+        G_AIChatHistory = [
+            {"role": "system", "content": "你是一名专业的中学数据分析师。请使用 Markdown 格式输出。数学公式**必须**使用 LaTeX 格式：行内公式用 $...$ 或 \\(...\\) 包裹，独立公式用 $$...$$ 包裹。化学式请使用 \\ce{...} 格式。"},
+            {"role": "user", "content": prompt}
+        ];
+
+        // 4. 发起请求
         const response = await fetch('https://api.deepseek.com/chat/completions', {
             method: 'POST',
             headers: {
@@ -9274,6 +9417,7 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
             throw new Error(errData.error?.message || `API 请求失败: ${response.status}`);
         }
 
+        // 5. 成功连接
         clearInterval(progressInterval);
         progressBar.style.width = '100%';
         await new Promise(r => setTimeout(r, 200));
@@ -9284,85 +9428,50 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
         
         let fullReasoning = "";
         let fullContent = "";
-        
-        const reasoningTemplate = (text) => `
-            <div style="border-left: 3px solid #ccc; background: #f9f9f9; padding: 10px 15px; margin-bottom: 15px; color: #666; font-size: 0.9em; font-style: italic;">
-                <div style="font-weight:bold; margin-bottom:5px;">🤔 深度思考过程:</div>
-                <div style="white-space: pre-wrap;">${text}</div>
-            </div>
-        `;
+        const reasoningTemplate = (text) => `<div style="border-left: 3px solid #ccc; background: #f9f9f9; padding: 10px 15px; margin-bottom: 15px; color: #666; font-size: 0.9em; font-style: italic;"><div style="font-weight:bold; margin-bottom:5px;">🤔 深度思考过程:</div><div style="white-space: pre-wrap;">${text}</div></div>`;
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-
             const chunk = decoder.decode(value, { stream: true });
             const lines = chunk.split('\n');
             
             for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (!trimmedLine || trimmedLine === 'data: [DONE]') continue;
-                
-                if (trimmedLine.startsWith('data: ')) {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed === 'data: [DONE]') continue;
+                if (trimmed.startsWith('data: ')) {
                     try {
-                        const json = JSON.parse(trimmedLine.slice(6));
+                        const json = JSON.parse(trimmed.slice(6));
                         const delta = json.choices[0].delta;
-
                         if (delta.reasoning_content) {
                             fullReasoning += delta.reasoning_content;
                             contentDiv.innerHTML = reasoningTemplate(fullReasoning) + (fullContent ? marked.parse(fullContent) : "");
                         }
-                        
                         if (delta.content) {
                             fullContent += delta.content;
-                            
                             requestAnimationFrame(() => {
-                                // [!! 核心升级 !!] 
-                                // 使用更强大的正则，同时匹配 $..$, $$..$$, \(..\), \[..\]
-                                // 并且使用安全的 MATHBLOCK 占位符
+                                // 公式保护与渲染逻辑 (保持不变)
+                                let processedMd = fullContent.replace(/\\\[/g, '$$$').replace(/\\\]/g, '$$$').replace(/\\\(/g, '$').replace(/\\\)/g, '$');
                                 const mathSegments = [];
-                                const protectedMarkdown = fullContent.replace(
-                                    /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$((?:\\.|[^\\$])*?)(?<!\\)\$)/g, 
-                                    (match) => {
-                                        const placeholder = `MATHBLOCK${mathSegments.length}END`;
-                                        mathSegments.push(match);
-                                        return placeholder;
-                                    }
-                                );
-
-                                // Markdown 渲染
-                                let html = marked.parse(protectedMarkdown);
-
-                                // 还原公式
-                                mathSegments.forEach((segment, index) => {
-                                    html = html.replace(`MATHBLOCK${index}END`, () => segment);
+                                const protectedMarkdown = processedMd.replace(/(\$\$[\s\S]*?\$\$|\$((?:\\.|[^\\$])*?)\$)/g, (m) => {
+                                    const p = `MATHBLOCK${mathSegments.length}END`; mathSegments.push(m); return p;
                                 });
-
-                                // 组合 HTML
+                                let html = marked.parse(protectedMarkdown);
+                                mathSegments.forEach((s, i) => html = html.replace(`MATHBLOCK${i}END`, () => s));
                                 const finalHtml = (fullReasoning ? reasoningTemplate(fullReasoning) : "") + html;
                                 contentDiv.innerHTML = finalHtml;
-
-                                // KaTeX 渲染 (配置支持所有格式)
                                 if (window.renderMathInElement) {
                                     renderMathInElement(contentDiv, {
-                                        delimiters: [
-                                            {left: "$$", right: "$$", display: true},
-                                            {left: "\\[", right: "\\]", display: true},
-                                            {left: "$", right: "$", display: false},
-                                            {left: "\\(", right: "\\)", display: false} // 支持 \( ... \)
-                                        ],
-                                        throwOnError: false,
-                                        macros: { "\\ce": "\\href{https://mhchem.github.io/}" } 
+                                        delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}],
+                                        throwOnError: false, macros: { "\\ce": "\\href{https://mhchem.github.io/}" } 
                                     });
                                 }
                             });
                         }
-
-                    } catch (e) { }
+                    } catch (e) {}
                 }
             }
         }
-        
         G_AIChatHistory.push({"role": "assistant", "content": fullContent});
         if (inputArea) inputArea.style.display = 'flex';
 
@@ -9370,7 +9479,13 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
         clearInterval(progressInterval);
         loadingDiv.style.display = 'none';
         if (err.name !== 'AbortError') {
-            contentDiv.innerHTML += `<div style="color: red; margin-top: 10px; padding: 10px; border: 1px solid red; border-radius: 5px;">❌ 分析中断: ${err.message}</div>`;
+            // [!!] 任何错误（包括 Prompt 生成错误）都会显示在这里
+            contentDiv.innerHTML = `
+                <div style="padding: 20px; background-color: #fff5f5; border-left: 5px solid #dc3545; border-radius: 4px; color: #721c24;">
+                    <h3 style="margin-top: 0; color: #dc3545;">⚠️ 出错了</h3>
+                    <p style="margin-bottom: 0; white-space: pre-wrap;">${err.message}</p>
+                </div>
+            `;
         }
     } finally {
         contentDiv.classList.remove('typing-cursor');
@@ -9515,4 +9630,110 @@ function renderMarkdownWithMath(element, markdown) {
             macros: { "\\ce": "\\href{https://mhchem.github.io/}" }
         });
     }
+}
+
+/**
+ * 14.1 [NEW] 打印 AI 分析报告
+ * - 特性：保留 Markdown 排版、保留 KaTeX 数学公式样式、自动生成页眉信息
+ */
+function printAIReport() {
+    const contentDiv = document.getElementById('ai-content');
+    if (!contentDiv || contentDiv.innerHTML.trim() === '') {
+        alert("没有可打印的内容！请先生成分析报告。");
+        return;
+    }
+
+    // 1. 获取上下文信息 (用于页眉)
+    const mode = document.getElementById('ai-mode-select').value;
+    const grade = document.getElementById('ai-grade-select').value;
+    const subject = document.getElementById('ai-item-subject').value || "综合";
+    let title = "";
+    let subTitle = "";
+
+    if (mode === 'teaching_guide') {
+        const className = document.getElementById('ai-item-class').value;
+        const classText = className === 'ALL' ? '全年段' : className;
+        title = `教学诊断报告 - ${subject}`;
+        subTitle = `分析对象：${classText} | 年级：${grade}`;
+    } else {
+        const studentName = document.getElementById('ai-student-search').dataset.selectedName || "学生";
+        title = `学业分析报告 - ${studentName}`;
+        subTitle = `年级：${grade} | 科目：${subject} | 模式：${document.getElementById('ai-mode-select').selectedOptions[0].text}`;
+    }
+
+    // 2. 获取 AI 生成的 HTML
+    const reportHtml = contentDiv.innerHTML;
+
+    // 3. 构建打印页面
+    // [关键] 必须引入 KaTeX CSS，否则公式会显示乱码
+    const printHtml = `
+        <html>
+        <head>
+            <title>${title}</title>
+            <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.9/katex.min.css">
+            <style>
+                body {
+                    font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+                    line-height: 1.6;
+                    padding: 2cm;
+                    color: #333;
+                }
+                /* 页眉样式 */
+                .print-header {
+                    text-align: center;
+                    border-bottom: 2px solid #333;
+                    margin-bottom: 30px;
+                    padding-bottom: 10px;
+                }
+                .print-header h1 { margin: 0 0 10px 0; font-size: 24px; }
+                .print-header p { margin: 0; color: #666; font-size: 14px; }
+
+                /* AI 内容样式复刻 (来自 style.css) */
+                h1, h2, h3 { color: #000; margin-top: 1.5em; }
+                h3 { border-left: 4px solid #000; padding-left: 10px; }
+                ul, ol { padding-left: 25px; }
+                li { margin-bottom: 5px; }
+                p { text-align: justify; margin-bottom: 1em; }
+                
+                /* 重点文字在打印时用加粗+下划线，比颜色更清晰 */
+                strong { 
+                    font-weight: 900; 
+                    background-color: #eee;
+                    padding: 0 4px;
+                    border-radius: 2px;
+                }
+                
+                /* 表格样式 */
+                table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+                th, td { border: 1px solid #999; padding: 8px; text-align: center; font-size: 0.9em; }
+                th { background-color: #f0f0f0; font-weight: bold; }
+
+                @media print {
+                    @page { size: A4 portrait; margin: 0; } /* 边距由 body padding 控制 */
+                }
+            </style>
+        </head>
+        <body>
+            <div class="print-header">
+                <h1>${title}</h1>
+                <p>${subTitle} | 生成时间：${new Date().toLocaleString()}</p>
+            </div>
+            
+            <div class="report-content">
+                ${reportHtml}
+            </div>
+        </body>
+        </html>
+    `;
+
+    // 4. 执行打印
+    const win = window.open('', '_blank');
+    win.document.write(printHtml);
+    win.document.close();
+
+    // 等待图片和 KaTeX 样式加载完成后再打印
+    setTimeout(() => {
+        win.focus();
+        win.print();
+    }, 1000); // 1秒延迟确保渲染
 }
