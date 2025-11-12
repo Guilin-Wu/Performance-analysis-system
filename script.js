@@ -9463,7 +9463,8 @@ async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount
                                 if (window.renderMathInElement) {
                                     renderMathInElement(contentDiv, {
                                         delimiters: [{left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}],
-                                        throwOnError: false, macros: { "\\ce": "\\href{https://mhchem.github.io/}" } 
+                                        throwOnError: false
+                                        // macros 行已删除，让 mhchem 插件自动工作
                                     });
                                 }
                             });
@@ -9627,7 +9628,7 @@ function renderMarkdownWithMath(element, markdown) {
                 { left: "\\(", right: "\\)", display: false }
             ],
             throwOnError: false,
-            macros: { "\\ce": "\\href{https://mhchem.github.io/}" }
+            //macros: { "\\ce": "\\href{https://mhchem.github.io/}" }
         });
     }
 }
