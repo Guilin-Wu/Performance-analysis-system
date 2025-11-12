@@ -21,7 +21,7 @@ let G_ItemOutlierList = [];
 let G_ItemDetailSort = { key: 'deviation', direction: 'asc' }; // [!! NEW !!] 缓存学生详情表的排序状态
 let G_CompareStatistics = {};
 let G_TrendSort = { key: 'rank', direction: 'asc' }; // [!!] (新增) 趋势模块的排序状态
-
+let currentAIController = null;
 // 存储UI状态
 let G_CurrentClassFilter = 'ALL';
 let G_CurrentImportType = 'main';
@@ -78,6 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeUI();
     initializeSubjectConfigs(); // 初始化科目配置
     loadDataFromStorage();
+    initAIModule();
 
     // ---------------------------------
     // 3. 事件监听器
@@ -881,6 +882,13 @@ function renderModule(moduleName, activeData, activeCompareData) {
         case 'item-analysis':
             renderItemAnalysis(container);
             break;
+
+        case 'ai-advisor':
+            // 因为 AI 模块的 HTML 是写死在 index.html 里的，
+            // 所以这里什么都不用做，直接 break 即可。
+            // 这样代码就不会跑去 default 分支把你的界面清空了。
+            break;
+
         default:
             container.innerHTML = `<h2>模块 ${moduleName} (待开发)</h2>`;
     }
@@ -2973,7 +2981,7 @@ function renderMultiExam(container) {
             }
         });
     }
-    
+
     // (监听: 全选)
     const selectAllBtn = document.getElementById('multi-subject-all');
     if (selectAllBtn) {
@@ -5985,15 +5993,15 @@ function initializeStudentSearch(multiExamData) {
  * - 图表3: 委托给新函数 `renderSubjectRankChart` 处理。
  */
 function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCheckboxes = false) {
-    
+
     // 1. 过滤与准备数据 (不变)
     const visibleExamData = multiExamData.filter(e => !e.isHidden);
     const examNames = visibleExamData.map(e => e.label);
 
     const rankData = { classRank: [], gradeRank: [] };
-    const subjectData = {}; 
+    const subjectData = {};
     // subjectRankData 在这里不再需要用于绘图，但表格仍需使用
-    const subjectRankData = {}; 
+    const subjectRankData = {};
 
     const allSubjects = new Set();
     visibleExamData.forEach(exam => {
@@ -6005,7 +6013,7 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
     const dynamicSubjects = Array.from(allSubjects);
     dynamicSubjects.forEach(subject => {
         subjectData[subject] = [];
-        subjectRankData[subject] = { classRank: [], gradeRank: [] }; 
+        subjectRankData[subject] = { classRank: [], gradeRank: [] };
     });
 
     let studentNameForPrint = "学生";
@@ -6082,13 +6090,13 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
     });
 
     // 6. 渲染 图表1 & 图表2 (不变)
-    renderMultiExamLineChart('multi-exam-score-chart', '', examNames, filteredScoreSeries, false); 
-    renderMultiExamLineChart('multi-exam-rank-chart', '', examNames, totalRankSeries, true); 
-    
+    renderMultiExamLineChart('multi-exam-score-chart', '', examNames, filteredScoreSeries, false);
+    renderMultiExamLineChart('multi-exam-rank-chart', '', examNames, totalRankSeries, true);
+
     // 7. [!! 核心修改 !!] 渲染 图表3 (调用新函数)
     const rankTypeSelect = document.getElementById('multi-rank-type-select');
     const rankType = rankTypeSelect ? rankTypeSelect.value : 'both';
-    
+
     // 直接调用新函数来处理复杂的排名逻辑
     renderSubjectRankChart(
         'multi-exam-subject-rank-chart', // 容器ID
@@ -8780,7 +8788,7 @@ function startMultiTablePrintJob(studentName, tableHtml) {
  * - (解决痛点) 即使后台计算了缺考排位，这里也会将其过滤为 null，防止图表乱连线。
  */
 function renderSubjectRankChart(containerId, examNames, visibleExamData, studentId, checkedSubjects, rankType) {
-    
+
     const series = [];
 
     // 遍历每一个被勾选的科目
@@ -8791,7 +8799,7 @@ function renderSubjectRankChart(containerId, examNames, visibleExamData, student
         // 遍历每一次考试
         visibleExamData.forEach(exam => {
             const student = exam.students.find(s => String(s.id) === String(studentId));
-            
+
             let validClassRank = null;
             let validGradeRank = null;
 
@@ -8838,4 +8846,328 @@ function renderSubjectRankChart(containerId, examNames, visibleExamData, student
 
     // 调用通用的绘图函数渲染 (反转Y轴: true)
     renderMultiExamLineChart(containerId, '', examNames, series, true);
+}
+
+// =====================================================================
+// [!! NEW !!] 模块十四：AI 智能分析 (DeepSeek 集成)
+// =====================================================================
+
+// 1. 初始化 AI 模块
+function initAIModule() {
+    const apiKeyInput = document.getElementById('ai-api-key');
+    const saveKeyBtn = document.getElementById('ai-save-key-btn');
+    const analyzeBtn = document.getElementById('ai-analyze-btn');
+    const searchInput = document.getElementById('ai-student-search');
+
+    const modeSelect = document.getElementById('ai-mode-select'); // 获取模式下拉框
+    const qCountWrapper = document.getElementById('ai-q-count-wrapper'); // 获取题量容器
+
+    // 加载保存的 Key
+    const savedKey = localStorage.getItem('G_DeepSeekKey');
+    if (savedKey) {
+        apiKeyInput.value = savedKey;
+        document.getElementById('ai-key-status').style.display = 'inline';
+    }
+
+    // 保存 Key
+    saveKeyBtn.addEventListener('click', () => {
+        const key = apiKeyInput.value.trim();
+        if (key.startsWith('sk-')) {
+            localStorage.setItem('G_DeepSeekKey', key);
+            document.getElementById('ai-key-status').style.display = 'inline';
+            alert('API Key 已保存！');
+        } else {
+            alert('请输入有效的 DeepSeek API Key (以 sk- 开头)');
+        }
+    });
+
+    // [!! 新增 !!] 监听模式变化，如果是“生成练习题”，则显示题量输入框
+    modeSelect.addEventListener('change', () => {
+        if (modeSelect.value === 'question') {
+            qCountWrapper.style.display = 'inline-flex';
+        } else {
+            qCountWrapper.style.display = 'none';
+        }
+    });
+
+    // 搜索学生 (复用之前的逻辑，稍微简化)
+    const resultsContainer = document.getElementById('ai-student-search-results');
+    // ... (此处可以复用 initializeStudentSearch 中的搜索逻辑，为了节省篇幅，建议直接调用或复制那段代码) ...
+    // 简单起见，我这里写一个简化的绑定：
+    const multiData = loadMultiExamData();
+    const allStudentsMap = new Map();
+    multiData.forEach(exam => exam.students.forEach(s => allStudentsMap.set(s.id, s.name)));
+    // 还要加上当前 G_StudentsData 的
+    G_StudentsData.forEach(s => allStudentsMap.set(s.id, s.name));
+    const allStudentsList = Array.from(allStudentsMap, ([id, name]) => ({ id, name }));
+
+    searchInput.addEventListener('input', (e) => {
+        const term = e.target.value.toLowerCase();
+        if (term.length < 1) { resultsContainer.style.display = 'none'; return; }
+
+        const matches = allStudentsList.filter(s => s.name.toLowerCase().includes(term) || String(s.id).includes(term)).slice(0, 10);
+        resultsContainer.innerHTML = matches.map(s => `<div class="result-item" data-id="${s.id}" data-name="${s.name}">${s.name} (${s.id})</div>`).join('');
+        resultsContainer.style.display = 'block';
+    });
+
+    resultsContainer.addEventListener('click', (e) => {
+        const item = e.target.closest('.result-item');
+        if (item) {
+            searchInput.value = `${item.dataset.name} (${item.dataset.id})`;
+            searchInput.dataset.selectedId = item.dataset.id;
+            searchInput.dataset.selectedName = item.dataset.name;
+            resultsContainer.style.display = 'none';
+            analyzeBtn.disabled = false; // 启用分析按钮
+        }
+    });
+
+    // 点击分析按钮
+    analyzeBtn.addEventListener('click', () => {
+        const studentId = searchInput.dataset.selectedId;
+        const studentName = searchInput.dataset.selectedName;
+        const mode = document.getElementById('ai-mode-select').value;
+        const model = document.getElementById('ai-model-select').value;
+        const qCount = document.getElementById('ai-q-count').value;
+        
+        // [!! 新增 !!] 获取年级
+        const grade = document.getElementById('ai-grade-select').value;
+
+        const apiKey = localStorage.getItem('G_DeepSeekKey');
+
+        if (!apiKey) { alert('请先设置 DeepSeek API Key'); return; }
+        if (!studentId) { alert('请先选择一名学生'); return; }
+
+        // [!! 修改 !!] 传入 grade
+        runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount, grade);
+    });
+
+    // 复制按钮
+    document.getElementById('ai-copy-btn').addEventListener('click', () => {
+        const content = document.getElementById('ai-content').innerText;
+        navigator.clipboard.writeText(content).then(() => alert('内容已复制'));
+    });
+}
+
+// 2. 收集学生数据并生成 Prompt
+// 2. 收集学生数据并生成 Prompt (支持年级)
+function generateAIPrompt(studentId, studentName, mode, qCount, grade) {
+    // A. 获取多次考试数据 (排除隐藏的)
+    const multiData = loadMultiExamData().filter(e => !e.isHidden);
+    
+    // [!! 修改 !!] 在开头强调年级，定下基调
+    let prompt = `你是一名经验丰富的**${grade}**班主任兼学科分析专家。现在需要你分析学生 "${studentName}" (${grade}) 的成绩数据。\n`;
+    prompt += `请结合**${grade}**的学习特点（例如${grade === '高一' ? '初高中衔接、习惯养成' : grade === '高二' ? '两极分化、难度提升' : '全面复习、高考冲刺'}）给出建议。\n\n`;
+    
+    prompt += `【历史考试数据】：\n`;
+    if (multiData.length === 0) {
+        prompt += `(暂无历史数据，仅参考本次成绩)\n`;
+    } else {
+        multiData.forEach(exam => {
+            const s = exam.students.find(st => String(st.id) === String(studentId));
+            if (s) {
+                prompt += `- 考试名称：${exam.label}\n`;
+                prompt += `  总分：${s.totalScore} (班排: ${s.rank}, 年排: ${s.gradeRank || 'N/A'})\n`;
+                // 为了节省 token，只列出主要科目
+                const scoreStr = Object.entries(s.scores)
+                    .map(([k, v]) => `${k}:${v}`)
+                    .join(', ');
+                prompt += `  各科得分：${scoreStr}\n`;
+            }
+        });
+    }
+
+    // B. 获取本次数据
+    const currentStudent = G_StudentsData.find(s => String(s.id) === String(studentId));
+    if (currentStudent) {
+        prompt += `\n【最新一次考试详情】：\n`;
+        G_DynamicSubjectList.forEach(sub => {
+            const score = currentStudent.scores[sub];
+            if (score !== undefined) {
+                const cr = currentStudent.classRanks ? currentStudent.classRanks[sub] : '-';
+                const gr = currentStudent.gradeRanks ? currentStudent.gradeRanks[sub] : '-';
+                prompt += `- ${sub}: ${score}分 | 班排${cr} | 年排${gr}\n`;
+            }
+        });
+    }
+
+    // C. 任务指令
+    prompt += `\n【你的任务】：\n`;
+    if (mode === 'trend') {
+        prompt += `1. 分析该生的总分及排名变化趋势。\n`;
+        prompt += `2. 指出优势学科和劣势学科。\n`;
+        prompt += `3. 给出符合**${grade}阶段**的学习建议。\n`;
+    } else if (mode === 'weakness') {
+        prompt += `1. 识别最薄弱的 1-2 门学科。\n`;
+        prompt += `2. 分析弱科是依然在下滑还是有所回升。\n`;
+        prompt += `3. 制定**${grade}**阶段的短期提分计划。\n`;
+    } else if (mode === 'question') {
+        prompt += `1. 找出最薄弱的一门学科。\n`;
+        prompt += `2. 生成 ${qCount} 道该学科的典型练习题，难度适配**${grade}**水平。\n`;
+        prompt += `3. 提供详细解析。\n`;
+    }
+
+    return prompt;
+}
+
+// 3. 调用 DeepSeek API (最终完美版：修复公式占位符Bug)
+async function runAIAnalysis(apiKey, studentId, studentName, mode, model, qCount, grade) {
+    const resultContainer = document.getElementById('ai-result-container');
+    const loadingDiv = document.getElementById('ai-loading');
+    const contentDiv = document.getElementById('ai-content');
+    const stopBtn = document.getElementById('ai-stop-btn');
+    
+    if (typeof marked === 'undefined') { alert("错误：marked.js 未加载！"); return; }
+
+    // UI 初始化
+    resultContainer.style.display = 'block';
+    contentDiv.innerHTML = ''; 
+    contentDiv.classList.add('typing-cursor');
+    stopBtn.style.display = 'inline-block';
+
+    // 动态 Loading
+    loadingDiv.innerHTML = `
+        <div style="font-size: 2.5em; margin-bottom: 10px; animation: bounce 1.5s infinite;">🧠</div>
+        <p style="color: #666; font-weight: 500;">AI 正在深度分析 (年级: ${grade})...</p>
+        <div class="ai-progress-container"><div class="ai-progress-bar" id="ai-progress-bar"></div></div>
+    `;
+    loadingDiv.style.display = 'block';
+
+    // 进度条
+    const progressBar = document.getElementById('ai-progress-bar');
+    let progress = 5;
+    progressBar.style.width = `${progress}%`;
+    const progressInterval = setInterval(() => {
+        if (progress < 90) {
+            progress += Math.random() * 3;
+            progressBar.style.width = `${progress}%`;
+        }
+    }, 200);
+
+    // 中断控制器
+    if (currentAIController) currentAIController.abort();
+    currentAIController = new AbortController();
+    
+    stopBtn.onclick = () => {
+        if (currentAIController) {
+            currentAIController.abort();
+            currentAIController = null;
+            stopBtn.style.display = 'none';
+            contentDiv.classList.remove('typing-cursor');
+            contentDiv.innerHTML += `<br><br><em style="color: #dc3545;">(用户手动停止了生成)</em>`;
+        }
+    };
+
+    const prompt = generateAIPrompt(studentId, studentName, mode, qCount, grade);
+
+    try {
+        const response = await fetch('https://api.deepseek.com/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: model, 
+                messages: [
+                    // 提示词：强制要求 LaTeX
+                    {"role": "system", "content": "你是一名专业的中学数据分析师。请使用 Markdown 格式输出。数学公式**必须**使用 LaTeX 格式：行内公式用 \\( ... \\) 包裹，独立公式用 $$ ... $$ 包裹。化学式请使用 \\ce{...} 格式。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature: 0.7,
+                stream: true 
+            }),
+            signal: currentAIController.signal
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error?.message || `API 请求失败: ${response.status}`);
+        }
+
+        clearInterval(progressInterval);
+        progressBar.style.width = '100%';
+        await new Promise(r => setTimeout(r, 200));
+        loadingDiv.style.display = 'none';
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let fullMarkdown = ""; 
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+                const trimmedLine = line.trim();
+                if (!trimmedLine || trimmedLine === 'data: [DONE]') continue;
+                
+                if (trimmedLine.startsWith('data: ')) {
+                    try {
+                        const jsonStr = trimmedLine.slice(6);
+                        const json = JSON.parse(jsonStr);
+                        const content = json.choices[0].delta.content || "";
+                        
+                        fullMarkdown += content;
+
+                        requestAnimationFrame(() => {
+                            // 1. 【保护阶段】提取公式
+                            // [!! 核心修复 !!] 使用不带特殊符号的占位符，防止 Markdown 误解析
+                            const mathSegments = [];
+                            const protectedMarkdown = fullMarkdown.replace(
+                                /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\))/g,
+                                (match) => {
+                                    // 使用 Plain Text 作为占位符，不含 _ 或 *
+                                    const placeholder = `MATHBLOCK${mathSegments.length}END`;
+                                    mathSegments.push(match);
+                                    return placeholder;
+                                }
+                            );
+
+                            // 2. 【Markdown 渲染】
+                            let html = marked.parse(protectedMarkdown);
+
+                            // 3. 【还原阶段】把公式放回去
+                            mathSegments.forEach((segment, index) => {
+                                const placeholder = `MATHBLOCK${index}END`;
+                                // [!! 核心修复 !!] 使用回调函数替换，防止公式中的 $ 符号被误认为是正则引用
+                                html = html.replace(placeholder, () => segment);
+                            });
+
+                            // 4. 【注入 HTML】
+                            contentDiv.innerHTML = html;
+
+                            // 5. 【KaTeX 渲染】
+                            if (window.renderMathInElement) {
+                                renderMathInElement(contentDiv, {
+                                    delimiters: [
+                                        {left: "$$", right: "$$", display: true},
+                                        {left: "\\[", right: "\\]", display: true},
+                                        {left: "$", right: "$", display: false},
+                                        {left: "\\(", right: "\\)", display: false}
+                                    ],
+                                    throwOnError: false,
+                                    macros: { "\\ce": "\\href{https://mhchem.github.io/}" } 
+                                });
+                            }
+                        });
+
+                    } catch (e) { }
+                }
+            }
+        }
+
+    } catch (err) {
+        clearInterval(progressInterval);
+        loadingDiv.style.display = 'none';
+        if (err.name !== 'AbortError') {
+            contentDiv.innerHTML += `<div style="color: red; margin-top: 10px; padding: 10px; border: 1px solid red; border-radius: 5px;">❌ 分析中断: ${err.message}</div>`;
+        }
+    } finally {
+        contentDiv.classList.remove('typing-cursor');
+        stopBtn.style.display = 'none';
+        currentAIController = null;
+    }
 }
