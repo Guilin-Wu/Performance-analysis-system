@@ -5995,9 +5995,7 @@ function initializeStudentSearch(multiExamData) {
 
 /**
  * (重构) 11.6. (核心) 绘制多次考试的图表和表格
- * [!! 最终版 V9 (函数分离架构) !!]
- * - 图表1 & 2: 继续由本函数处理。
- * - 图表3: 委托给新函数 `renderSubjectRankChart` 处理。
+ * [!! 修复版 !!] 解决缺考科目显示排名的问题
  */
 function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCheckboxes = false) {
 
@@ -6007,13 +6005,12 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
 
     const rankData = { classRank: [], gradeRank: [] };
     const subjectData = {};
-    // subjectRankData 在这里不再需要用于绘图，但表格仍需使用
     const subjectRankData = {};
 
     const allSubjects = new Set();
     visibleExamData.forEach(exam => {
         exam.students.forEach(s => {
-            Object.keys(s.scores).forEach(subject => allSubjects.add(subject));
+            if (s.scores) Object.keys(s.scores).forEach(subject => allSubjects.add(subject));
         });
     });
 
@@ -6025,7 +6022,7 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
 
     let studentNameForPrint = "学生";
 
-    // 2. 填充数据 (不变)
+    // 2. 填充数据
     visibleExamData.forEach(exam => {
         const student = exam.students.find(s => String(s.id) === String(studentId));
         if (student) {
@@ -6033,14 +6030,27 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
 
             rankData.classRank.push(student.rank || null);
             rankData.gradeRank.push(student.gradeRank || null);
+            
             dynamicSubjects.forEach(subject => {
-                subjectData[subject].push(student.scores[subject] || null);
-                const classRank = student.classRanks ? student.classRanks[subject] : null;
-                const gradeRank = student.gradeRanks ? student.gradeRanks[subject] : null;
-                subjectRankData[subject].classRank.push(classRank || null);
-                subjectRankData[subject].gradeRank.push(gradeRank || null);
+                const rawScore = student.scores[subject];
+                // [!! 修复 1] 只有当 rawScore 严格为 null/undefined 时才存为 null (保留 0 分)
+                subjectData[subject].push((rawScore !== null && rawScore !== undefined) ? rawScore : null);
+
+                // [!! 修复 2] 核心逻辑：只有当有有效分数时，才获取排名
+                // 如果分数是 N/A，那么排名强制设为 null，不读取系统自动生成的“倒数第一”排名
+                let classRank = null;
+                let gradeRank = null;
+
+                if (typeof rawScore === 'number' && !isNaN(rawScore)) {
+                    classRank = student.classRanks ? student.classRanks[subject] : null;
+                    gradeRank = student.gradeRanks ? student.gradeRanks[subject] : null;
+                }
+
+                subjectRankData[subject].classRank.push(classRank);
+                subjectRankData[subject].gradeRank.push(gradeRank);
             });
         } else {
+            // 学生没参加这次考试，全部填 null
             rankData.classRank.push(null);
             rankData.gradeRank.push(null);
             dynamicSubjects.forEach(subject => {
@@ -6079,7 +6089,7 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
     }
     const filteredScoreSeries = scoreSeries.filter(series => checkedSubjects.has(series.name));
 
-    // 5. [图表2 数据] 总分排名 (固定 - 不变)
+    // 5. [图表2 数据] 总分排名 (不变)
     const totalRankSeries = [];
     totalRankSeries.push({
         name: '班级排名 (总)',
@@ -6100,23 +6110,25 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
     renderMultiExamLineChart('multi-exam-score-chart', '', examNames, filteredScoreSeries, false);
     renderMultiExamLineChart('multi-exam-rank-chart', '', examNames, totalRankSeries, true);
 
-    // 7. [!! 核心修改 !!] 渲染 图表3 (调用新函数)
+    // 7. 渲染 图表3 (不变，调用新函数)
     const rankTypeSelect = document.getElementById('multi-rank-type-select');
     const rankType = rankTypeSelect ? rankTypeSelect.value : 'both';
 
-    // 直接调用新函数来处理复杂的排名逻辑
     renderSubjectRankChart(
-        'multi-exam-subject-rank-chart', // 容器ID
-        examNames,                       // X轴标签
-        visibleExamData,                 // 完整数据源
-        studentId,                       // 当前学生ID
-        checkedSubjects,                 // 勾选的科目
-        rankType                         // 显示类型 (class/grade/both)
+        'multi-exam-subject-rank-chart',
+        examNames,
+        visibleExamData,
+        studentId,
+        checkedSubjects,
+        rankType
     );
 
-    // 8. 绘制表格 (含打印按钮) (不变)
+    // 8. 绘制表格 (含打印按钮) [!! 修改渲染模板]
     const tableContainer = document.getElementById('multi-student-table-container');
     if (!tableContainer) return;
+
+    // 辅助函数：安全显示数据 (0分显示0，null显示N/A)
+    const safeVal = (v) => (v !== null && v !== undefined) ? v : 'N/A';
 
     let tableHtml = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-top: 20px; border-top: 1px solid var(--border-color);">
@@ -6129,7 +6141,7 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
             <table>
                 <thead>
                     <tr>
-                        <th>考试名称</th>
+                        <th style="min-width: 120px;">考试名称</th>
                         <th>班级排名 (总)</th>
                         <th>年级排名 (总)</th>
                         ${dynamicSubjects.map(s => `<th>${s} (分数)</th>`).join('')}
@@ -6141,16 +6153,16 @@ function drawMultiExamChartsAndTable(studentId, multiExamData, forceRepopulateCh
                     ${examNames.map((examName, index) => `
                         <tr>
                             <td><strong>${examName}</strong></td>
-                            <td>${rankData.classRank[index] || 'N/A'}</td>
-                            <td>${rankData.gradeRank[index] || 'N/A'}</td>
+                            <td>${safeVal(rankData.classRank[index])}</td>
+                            <td>${safeVal(rankData.gradeRank[index])}</td>
                             ${dynamicSubjects.map(subject => `
-                                <td>${subjectData[subject][index] || 'N/A'}</td>
+                                <td>${safeVal(subjectData[subject][index])}</td>
                             `).join('')}
                             ${dynamicSubjects.map(subject => `
-                                <td>${subjectRankData[subject].classRank[index] || 'N/A'}</td>
+                                <td>${safeVal(subjectRankData[subject].classRank[index])}</td>
                             `).join('')}
                             ${dynamicSubjects.map(subject => `
-                                <td>${subjectRankData[subject].gradeRank[index] || 'N/A'}</td>
+                                <td>${safeVal(subjectRankData[subject].gradeRank[index])}</td>
                             `).join('')}
                         </tr>
                     `).join('')}
@@ -9598,37 +9610,44 @@ async function sendAIFollowUp() {
     }
 }
 
-// 辅助函数：统一的 Markdown + Math 渲染
 function renderMarkdownWithMath(element, markdown) {
-    // 1. 保护公式
+    // [!! 最终修复 !!] 移除所有的 replace 预处理
+    // 因为 Prompt 已经让 AI 生成了标准的 LaTeX 格式 ($...$)
+    // 我们直接渲染，不再画蛇添足，这样就不会导致换行或乱码了
+    
+    // 1. 保护公式 (防止 marked.js 把公式里的符号误认为是 markdown 语法)
     const mathSegments = [];
     const protectedMarkdown = markdown.replace(
-        /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\))/g,
+        /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\\ce\{[^\}]+\}|\$[^\$]+\$)/g, 
         (match) => {
             const placeholder = `MATHBLOCK${mathSegments.length}END`;
             mathSegments.push(match);
             return placeholder;
         }
     );
+
     // 2. 渲染 Markdown
     let html = marked.parse(protectedMarkdown);
+
     // 3. 还原公式
     mathSegments.forEach((segment, index) => {
         html = html.replace(`MATHBLOCK${index}END`, () => segment);
     });
-    // 4. 注入
+
+    // 4. 注入 HTML
     element.innerHTML = html;
-    // 5. 渲染 Math
+
+    // 5. 渲染 Math (KaTeX)
     if (window.renderMathInElement) {
         renderMathInElement(element, {
             delimiters: [
-                { left: "$$", right: "$$", display: true },
+                { left: "$$", right: "$$", display: true }, // 块级公式 (居中)
                 { left: "\\[", right: "\\]", display: true },
-                { left: "$", right: "$", display: false },
+                { left: "$", right: "$", display: false },  // 行内公式 (不换行)
                 { left: "\\(", right: "\\)", display: false }
             ],
-            throwOnError: false,
-            //macros: { "\\ce": "\\href{https://mhchem.github.io/}" }
+            throwOnError: false
+            // [重要] 确保这里没有 macros 配置
         });
     }
 }
