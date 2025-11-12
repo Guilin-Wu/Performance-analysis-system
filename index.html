@@ -142,12 +142,12 @@
                             <option value="四年级">四年级</option>
                             <option value="五年级">五年级</option>
                             <option value="六年级">六年级</option>
-                            
+
                             <option value="初一">初一</option>
                             <option value="初二">初二</option>
                             <option value="初三">初三</option>
 
-                            <option value="高一"selected>高一</option>
+                            <option value="高一" selected>高一</option>
                             <option value="高二">高二</option>
                             <option value="高三">高三</option>
                         </select>
@@ -156,7 +156,18 @@
                             <option value="trend">📈 综合趋势点评 & 学习建议</option>
                             <option value="weakness">📉 弱科诊断 & 提分策略</option>
                             <option value="question">📝 针对弱项生成练习题</option>
+                            <option value="item_diagnosis">🔬 小题深度诊断 (基于模块13数据)</option>
                         </select>
+
+                        <span id="ai-item-subject-wrapper"
+                            style="display: none; margin-left: 10px; align-items: center;">
+                            <label for="ai-item-subject"
+                                style="margin-right: 5px; font-size: 0.9em; color: #555;">科目:</label>
+                            <select id="ai-item-subject" class="sidebar-select"
+                                style="width: auto; min-width: 80px; border-color: #17a2b8; background-color: #f0fcfd;">
+                                <option value="">无数据</option>
+                            </select>
+                        </span>
 
                         <span id="ai-q-count-wrapper" style="display: none; margin-left: 10px; align-items: center;">
                             <label for="ai-q-count" style="margin-right: 5px; font-size: 0.9em;">题量:</label>
@@ -197,8 +208,18 @@
                     </div>
 
                     <div id="ai-content" style="line-height: 1.6; font-size: 1.05em;"></div>
-                </div>
-            </div>
+
+                    <div id="ai-chat-history" style="margin-top: 20px; border-top: 1px dashed #eee; padding-top: 20px;">
+                    </div>
+
+                    <div id="ai-followup-input-area"
+                        style="display: none; margin-top: 15px; gap: 10px; align-items: flex-start;">
+                        <textarea id="ai-user-input" class="sidebar-select" rows="1"
+                            placeholder="继续追问 AI (例如：给我详细讲讲数学错题...)"
+                            style="flex-grow: 1; resize: none; height: 40px; padding: 10px; line-height: 20px;"></textarea>
+                        <button id="ai-send-btn" class="sidebar-button"
+                            style="height: 42px; background-color: var(--primary-color);">发送</button>
+                    </div>
         </main>
     </div>
 
